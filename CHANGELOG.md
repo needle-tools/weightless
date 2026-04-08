@@ -8,4 +8,5 @@
 - Grouped raw files into logical model rows instead of file-per-row output
 - Added provider drill-down, created dates, and open-in-Finder support
 - Expanded provider coverage across desktop apps, Hugging Face caches, and project-local stores
-- Added an install script and refreshed the README for a smoother user/developer setup
+- Added release automation for GitHub Releases and Homebrew publishing
+- Added a release-downloading install script and refreshed the README for a smoother user/developer setup

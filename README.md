@@ -14,6 +14,53 @@ Terminal UI for finding local AI model weights across desktop apps, shared cache
 - Emits machine-readable JSON for debugging and automation
 - Keeps the provider registry easy to extend in [internal/providers/registry.go](/Users/herbst/git/temp/llm-finder/internal/providers/registry.go)
 
+## Quick Start
+
+Install via Homebrew:
+
+```bash
+brew install hybridherbst/tap/weightloss
+```
+
+Or via install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightloss/main/install.sh | bash
+```
+
+Install a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightloss/main/install.sh | bash -s -- -s 1.0.0
+```
+
+Run it:
+
+```bash
+weightloss
+weightloss --json
+weightloss --version
+```
+
+## Usage
+
+```bash
+weightloss
+weightloss --json
+weightloss --providers ollama,lm-studio,huggingface
+weightloss --roots ~/work/models,/Volumes/FastSSD/models
+weightloss --min-size-mb 8
+```
+
+TUI keys:
+
+- `←` and `→` switch tabs
+- `enter` or `space` drills into a provider from Summary
+- `o` reveals the selected item in Finder
+- `r` refreshes the scan
+- `esc` goes back from a drilled view
+- `q` quits
+
 ## Providers
 
 Current coverage includes:
@@ -37,75 +84,6 @@ Current coverage includes:
 - `stable-diffusion-webui`
 - `invokeai`
 - `project-local`
-
-## Quick Start
-
-Install with the included script:
-
-```bash
-cd /path/to/weightloss
-./install.sh
-```
-
-By default this installs `weightloss` to `~/.local/bin`.
-
-Run it:
-
-```bash
-weightloss
-```
-
-JSON mode:
-
-```bash
-weightloss --json
-```
-
-Show the installed version:
-
-```bash
-weightloss --version
-```
-
-## Install Options
-
-Install to a custom prefix:
-
-```bash
-./install.sh --prefix /usr/local/bin
-```
-
-Build manually without the installer:
-
-```bash
-PATH=/opt/homebrew/bin:$PATH go build -o weightloss .
-mv ./weightloss ~/.local/bin/weightloss
-```
-
-Remove it:
-
-```bash
-rm -f ~/.local/bin/weightloss
-```
-
-## Usage
-
-```bash
-weightloss
-weightloss --json
-weightloss --providers ollama,lm-studio,huggingface
-weightloss --roots ~/work/models,/Volumes/FastSSD/models
-weightloss --min-size-mb 8
-```
-
-TUI keys:
-
-- `←` and `→` switch tabs
-- `enter` or `space` drills into a provider from Summary
-- `o` reveals the selected item in Finder
-- `r` refreshes the scan
-- `esc` goes back from a drilled view
-- `q` quits
 
 ## JSON Output
 
@@ -144,19 +122,48 @@ Example shape:
 
 ## Development
 
+Build locally:
+
+```bash
+PATH=/opt/homebrew/bin:$PATH go build -o weightloss .
+```
+
 Run from source:
 
 ```bash
 go run .
 ```
 
-Build a local binary:
+Build from source with the installer:
 
 ```bash
-PATH=/opt/homebrew/bin:$PATH go build -o weightloss .
+./install.sh --build-from-source
 ```
 
 The provider registry is intentionally simple: most new locations are just an extra `LocationSpec` in [internal/providers/registry.go](/Users/herbst/git/temp/llm-finder/internal/providers/registry.go).
+
+## Maintainer Setup
+
+To publish this like `mole`, do these one-time remote steps:
+
+1. Create the GitHub repo `hybridherbst/weightloss`.
+2. Create the Homebrew tap repo `hybridherbst/homebrew-tap`.
+3. Add the `HOMEBREW_TAP_GITHUB_TOKEN` GitHub Actions secret on `hybridherbst/weightloss`.
+4. Push `main`.
+5. Tag a release and push it:
+
+```bash
+git tag v1.0.0
+git push origin main --tags
+```
+
+That release flow will:
+
+- run CI
+- build macOS, Linux, and Windows binaries
+- publish GitHub Release assets
+- generate checksums
+- update the Homebrew formula in `hybridherbst/homebrew-tap`
 
 ## Changelog
 
