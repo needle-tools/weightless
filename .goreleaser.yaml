@@ -1,0 +1,67 @@
+version: 2
+
+project_name: weightloss
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: weightloss
+    main: .
+    binary: weightloss
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{ .Version }}
+
+archives:
+  - id: weightloss
+    ids:
+      - weightloss
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: hybridherbst
+    name: weightloss
+
+brews:
+  - name: weightloss
+    ids:
+      - weightloss
+    homepage: https://github.com/hybridherbst/weightloss
+    description: Find local AI model weights across apps, caches, and project folders.
+    license: MIT
+    repository:
+      owner: hybridherbst
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    test: |
+      system "#{bin}/weightloss", "--version"
