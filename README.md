@@ -1,40 +1,40 @@
 # weightloss
 
-Terminal UI for finding local AI model weights across desktop apps, shared caches, and project folders.
+Find local AI model weights across desktop apps, shared caches, and project folders.
 
-`weightloss` is built for the messy real world where Ollama, LM Studio, Hugging Face, Draw Things, Upscayl, `llama.cpp`, and other tools all stash weights in different places. It gives you one sortable TUI plus a JSON mode for scripting.
+`weightloss` is for the messy real world where Ollama, LM Studio, Hugging Face, Draw Things, Upscayl, `llama.cpp`, and one-off repos all store weights in different places. It gives you one interactive terminal UI plus a JSON mode for scripting and debugging.
 
-## Features
+## Highlights
 
 - Scans provider-specific model stores and common project-local weight directories
 - Groups raw files into logical models so sharded packages show up as one row
-- Shows total size, created date, provider, and path
+- Shows size, provider, created date, and path
 - Lets you drill from Summary into provider-specific Models
-- Supports refresh in-place from the TUI with `r`
-- Emits machine-readable JSON for debugging and automation
-- Keeps the provider registry easy to extend in [internal/providers/registry.go](/Users/herbst/git/temp/llm-finder/internal/providers/registry.go)
+- Refreshes in place with `r`
+- Emits machine-readable JSON
+- Keeps provider detection easy to extend in [internal/providers/registry.go](/Users/herbst/git/temp/llm-finder/internal/providers/registry.go)
 
-## Quick Start
+## Install
 
-Install via Homebrew:
+Homebrew:
 
 ```bash
 brew install hybridherbst/tap/weightloss
 ```
 
-Or via install script:
+Install script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightloss/main/install.sh | bash
 ```
 
-Install a specific release:
+Specific version:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightloss/main/install.sh | bash -s -- -s 1.0.0
 ```
 
-Run it:
+## Run
 
 ```bash
 weightloss
@@ -42,21 +42,21 @@ weightloss --json
 weightloss --version
 ```
 
-## Usage
+Common flags:
 
 ```bash
-weightloss
-weightloss --json
 weightloss --providers ollama,lm-studio,huggingface
 weightloss --roots ~/work/models,/Volumes/FastSSD/models
 weightloss --min-size-mb 8
 ```
 
-TUI keys:
+## TUI
+
+Keys:
 
 - `←` and `→` switch tabs
 - `enter` or `space` drills into a provider from Summary
-- `o` reveals the selected item in Finder
+- `o` opens or reveals the selected item
 - `r` refreshes the scan
 - `esc` goes back from a drilled view
 - `q` quits
@@ -140,21 +140,21 @@ Build from source with the installer:
 ./install.sh --build-from-source
 ```
 
-The provider registry is intentionally simple: most new locations are just an extra `LocationSpec` in [internal/providers/registry.go](/Users/herbst/git/temp/llm-finder/internal/providers/registry.go).
+## Release
 
-## Maintainer Setup
+This repo is set up to publish GitHub Releases and a Homebrew formula.
 
-To publish this like `mole`, do these one-time remote steps:
+One-time maintainer setup:
 
 1. Create the GitHub repo `hybridherbst/weightloss`.
 2. Create the Homebrew tap repo `hybridherbst/homebrew-tap`.
 3. Add the `HOMEBREW_TAP_GITHUB_TOKEN` GitHub Actions secret on `hybridherbst/weightloss`.
-4. Push `main`.
-5. Tag a release and push it:
+
+Publish a release:
 
 ```bash
-git tag v1.0.0
-git push origin main --tags
+git push origin main
+git push origin v1.0.0
 ```
 
 That release flow will:
