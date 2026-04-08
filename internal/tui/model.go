@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -604,7 +605,22 @@ func openSelected(tabIndex int, tables []table.Model, openPaths [][]string) tea.
 	if target == "" {
 		return nil
 	}
-	return tea.ExecProcess(exec.Command("open", "-R", target), nil)
+	cmd := openCommand(target)
+	if cmd == nil {
+		return nil
+	}
+	return tea.ExecProcess(cmd, nil)
+}
+
+func openCommand(target string) *exec.Cmd {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", "-R", target)
+	case "windows":
+		return exec.Command("explorer.exe", "/select,", target)
+	default:
+		return exec.Command("xdg-open", target)
+	}
 }
 
 func displayCreatedAt(value string) string {
