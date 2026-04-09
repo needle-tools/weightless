@@ -228,13 +228,6 @@ func Registry(additionalRoots []string) []LocationSpec {
 			Provider: "project-local",
 			Name:     "Project-local model roots",
 			Roots: append([]string{
-				".",
-				"./models",
-				"./model",
-				"./checkpoints",
-				"./weights",
-				"./loras",
-				"./embeddings",
 				"~/git/*/models",
 				"~/git/*/model",
 				"~/git/*/checkpoints",

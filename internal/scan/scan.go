@@ -38,6 +38,7 @@ type Config struct {
 	AdditionalRoots   []string
 	Providers         []string
 	IncludeHiddenDirs bool
+	Progress          func(string)
 }
 
 type Match struct {
@@ -119,7 +120,11 @@ func Run(cfg Config) (Report, error) {
 	locationSummaries := make([]LocationSummary, 0)
 	records := map[string]*record{}
 
-	for _, spec := range locationSpecs {
+	totalProviders := len(locationSpecs)
+	for idx, spec := range locationSpecs {
+		if cfg.Progress != nil {
+			cfg.Progress(fmt.Sprintf("[%d/%d] %s", idx+1, totalProviders, spec.Provider))
+		}
 		for _, rootTemplate := range spec.Roots {
 			roots, ok := expandRoots(rootTemplate, home, cwd)
 			if !ok {
@@ -138,7 +143,10 @@ func Run(cfg Config) (Report, error) {
 				if !exists {
 					continue
 				}
-				if err := walkRoot(root, spec, records); err != nil {
+				if cfg.Progress != nil {
+					cfg.Progress(fmt.Sprintf("[%d/%d] %s: %s", idx+1, totalProviders, spec.Provider, root))
+				}
+				if err := walkRoot(root, spec, records, cfg.Progress); err != nil {
 					return Report{}, err
 				}
 			}
@@ -168,6 +176,9 @@ func Run(cfg Config) (Report, error) {
 	report.TotalBytesHuman = humanBytes(report.TotalBytes)
 	report.Locations = enrichLocationSizes(report.Locations, report.Artifacts)
 	report.LocationSummaries = report.Locations
+	if cfg.Progress != nil {
+		cfg.Progress(fmt.Sprintf("Found %d models across %d providers", report.TotalArtifacts, len(report.Summary)))
+	}
 	return report, nil
 }
 
@@ -222,10 +233,21 @@ func hasGlob(value string) bool {
 	return strings.ContainsAny(value, "*?[")
 }
 
-func walkRoot(root string, spec providers.LocationSpec, records map[string]*record) error {
+func walkRoot(root string, spec providers.LocationSpec, records map[string]*record, progress func(string)) error {
+	lastProgress := time.Now()
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
+		}
+		if progress != nil && time.Since(lastProgress) >= time.Second {
+			rel := path
+			if relative, err := filepath.Rel(root, path); err == nil && relative != "." {
+				rel = relative
+			} else {
+				rel = filepath.Base(root)
+			}
+			progress(fmt.Sprintf("%s: %s", spec.Provider, rel))
+			lastProgress = time.Now()
 		}
 		if d.IsDir() {
 			base := d.Name()
