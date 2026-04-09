@@ -2,7 +2,7 @@
 
 ## 1.0.0 - 2026-04-08
 
-Initial stable release.
+Initial stable release of `weightless`.
 
 Highlights:
 

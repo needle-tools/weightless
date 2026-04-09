@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"weightloss/internal/providers"
+	"weightless/internal/providers"
 )
 
 var knownModelExtensions = map[string]struct{}{

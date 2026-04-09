@@ -1,4 +1,4 @@
-module weightloss
+module weightless
 
 go 1.26.0
 

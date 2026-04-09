@@ -13,8 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"weightloss/internal/branding"
-	"weightloss/internal/scan"
+	"weightless/internal/branding"
+	"weightless/internal/scan"
 )
 
 const (
@@ -208,7 +208,7 @@ func (m Model) View() string {
 	titleText := renderTitle(m.width)
 	title := m.titleStyle.Render(titleText)
 	leading := ""
-	if titleText != "weightloss" {
+	if titleText != "weightless" {
 		leading = ""
 	}
 	summary := fmt.Sprintf(
@@ -228,7 +228,7 @@ func (m Model) View() string {
 	}
 
 	body := m.tables[m.activeTab].View()
-	footer := m.help.View(helpBindings{short: m.helpBindings()})
+	footer := m.footerView()
 
 	return "\n\n\n\n\n\n" + lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -243,11 +243,28 @@ func (m Model) View() string {
 	)
 }
 
+func (m Model) footerView() string {
+	left := m.help.View(helpBindings{short: m.helpBindings()})
+	right := m.liveStyle.Copy().Bold(false).Render("by 🌵 needle")
+	if strings.TrimSpace(left) == "" {
+		return right
+	}
+	if m.width <= 0 {
+		return left
+	}
+	leftWidth := lipgloss.Width(left)
+	rightWidth := lipgloss.Width(right)
+	if leftWidth+rightWidth+2 > m.width {
+		return left
+	}
+	return left + strings.Repeat(" ", m.width-leftWidth-rightWidth) + right
+}
+
 func renderTitle(width int) string {
 	if width >= 56 {
 		return titleArt
 	}
-	return "weightloss"
+	return "weightless"
 }
 
 func (m *Model) rebuildTables() {

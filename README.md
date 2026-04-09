@@ -1,8 +1,8 @@
-# weightloss
+# weightless
 
 Find local AI model weights across desktop apps, shared caches, and project folders.
 
-`weightloss` is for the messy real world where Ollama, LM Studio, Hugging Face, Draw Things, Upscayl, `llama.cpp`, and one-off repos all store weights in different places. It gives you one interactive terminal UI plus a JSON mode for scripting and debugging.
+`weightless` is for the messy real world where Ollama, LM Studio, Hugging Face, Draw Things, Upscayl, `llama.cpp`, and one-off repos all store weights in different places. It gives you one interactive terminal UI plus a JSON mode for scripting and debugging.
 
 ## Highlights
 
@@ -19,35 +19,35 @@ Find local AI model weights across desktop apps, shared caches, and project fold
 Homebrew:
 
 ```bash
-brew install hybridherbst/tap/weightloss
+brew install hybridherbst/tap/weightless
 ```
 
 Install script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightloss/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightless/main/install.sh | bash
 ```
 
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightloss/main/install.sh | bash -s -- -s 1.0.0
+curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightless/main/install.sh | bash -s -- -s 1.0.0
 ```
 
 ## Run
 
 ```bash
-weightloss
-weightloss --json
-weightloss --version
+weightless
+weightless --json
+weightless --version
 ```
 
 Common flags:
 
 ```bash
-weightloss --providers ollama,lm-studio,huggingface
-weightloss --roots ~/work/models,/Volumes/FastSSD/models
-weightloss --min-size-mb 8
+weightless --providers ollama,lm-studio,huggingface
+weightless --roots ~/work/models,/Volumes/FastSSD/models
+weightless --min-size-mb 8
 ```
 
 ## TUI
@@ -125,7 +125,7 @@ Example shape:
 Build locally:
 
 ```bash
-PATH=/opt/homebrew/bin:$PATH go build -o weightloss .
+PATH=/opt/homebrew/bin:$PATH go build -o weightless .
 ```
 
 Run from source:
@@ -146,9 +146,9 @@ This repo is set up to publish GitHub Releases and a Homebrew formula.
 
 One-time maintainer setup:
 
-1. Create the GitHub repo `hybridherbst/weightloss`.
+1. Create the GitHub repo `hybridherbst/weightless`.
 2. Create the Homebrew tap repo `hybridherbst/homebrew-tap`.
-3. Add the `HOMEBREW_TAP_GITHUB_TOKEN` GitHub Actions secret on `hybridherbst/weightloss`.
+3. Add the `HOMEBREW_TAP_GITHUB_TOKEN` GitHub Actions secret on `hybridherbst/weightless`.
 
 Publish a release:
 

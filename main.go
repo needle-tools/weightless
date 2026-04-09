@@ -9,9 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"weightloss/internal/branding"
-	"weightloss/internal/scan"
-	"weightloss/internal/tui"
+	"weightless/internal/branding"
+	"weightless/internal/scan"
+	"weightless/internal/tui"
 )
 
 func main() {
@@ -24,19 +24,19 @@ func main() {
 	)
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), strings.TrimLeft(branding.Banner, "\n"))
-		fmt.Fprintf(flag.CommandLine.Output(), "weightloss %s\n", Version)
+		fmt.Fprintf(flag.CommandLine.Output(), "weightless %s\n", Version)
 		fmt.Fprintf(flag.CommandLine.Output(), "Find local model weights across AI apps, shared caches, and project folders.\n\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  weightloss           launch the TUI\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  weightloss --json    print machine-readable JSON\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  weightloss --version show version\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  weightless           launch the TUI\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  weightless --json    print machine-readable JSON\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  weightless --version show version\n\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "Options:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
 	if *version {
-		fmt.Printf("weightloss %s\n", Version)
+		fmt.Printf("weightless %s\n", Version)
 		return
 	}
 
