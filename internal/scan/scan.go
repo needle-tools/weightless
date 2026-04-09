@@ -15,7 +15,6 @@ import (
 )
 
 var knownModelExtensions = map[string]struct{}{
-	".bin":             {},
 	".ckpt":            {},
 	".ckpt-tensordata": {},
 	".engine":          {},
@@ -31,6 +30,10 @@ var knownModelExtensions = map[string]struct{}{
 	".pth":             {},
 	".safetensors":     {},
 	".tflite":          {},
+}
+
+var ambiguousModelExtensions = map[string]struct{}{
+	".bin": {},
 }
 
 type Config struct {
@@ -383,15 +386,67 @@ func candidate(path string, size int64, spec providers.LocationSpec) bool {
 	if strings.HasSuffix(lower, ".incomplete") || strings.HasSuffix(lower, ".partial") || strings.HasSuffix(lower, ".part") {
 		return true
 	}
-	if _, ok := knownModelExtensions[strings.ToLower(filepath.Ext(lower))]; ok {
+	ext := strings.ToLower(filepath.Ext(lower))
+	if _, ok := knownModelExtensions[ext]; ok {
 		return true
+	}
+	if _, ok := ambiguousModelExtensions[ext]; ok {
+		return hasStrongModelSignal(lower)
 	}
 	for _, needle := range spec.ForcePathContains {
 		if strings.Contains(lower, strings.ToLower(filepath.ToSlash(needle))) {
+			if ext == "" {
+				return true
+			}
+			if _, ok := ambiguousModelExtensions[ext]; ok {
+				return hasStrongModelSignal(lower)
+			}
+			return false
+		}
+	}
+	return false
+}
+
+func hasStrongModelSignal(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	if strings.Contains(base, "model") {
+		return true
+	}
+	for _, token := range strongModelSignalTokens() {
+		if strings.Contains(path, token) || strings.Contains(base, token) {
 			return true
 		}
 	}
 	return false
+}
+
+func strongModelSignalTokens() []string {
+	return []string{
+		"bnnsmodel",
+		"bnnsmodels",
+		"checkpoint",
+		"checkpoints",
+		"weight",
+		"weights",
+		"encoder",
+		"decoder",
+		"embedding",
+		"embeddings",
+		"tokenizer",
+		"prompt_encoder",
+		"text_encoder",
+		"unet",
+		"vae",
+		"lora",
+		"loras",
+		"gguf",
+		"ggml",
+		"onnx",
+		"transformer",
+		"transformers",
+		"diffusion",
+		"bnns",
+	}
 }
 
 func canonicalPath(path string) string {
