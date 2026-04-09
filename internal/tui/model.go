@@ -350,7 +350,7 @@ func buildTables(base scan.Report, report scan.Report, width int, providerFilter
 						item.Name,
 						item.SizeHuman,
 						item.PrimaryProvider,
-						displayCreatedAt(item.CreatedAt),
+						displayTimestamp(item.Timestamp),
 						displayPath,
 					})
 					tabPaths = append(tabPaths, item.Path)
@@ -397,7 +397,7 @@ func artifactColumns(width int, drilled bool) []table.Column {
 		{Title: "Name", Width: nameWidth},
 		{Title: "Size", Width: 10},
 		{Title: "Provider", Width: 12},
-		{Title: "Created", Width: 12},
+		{Title: "Timestamp", Width: 12},
 		{Title: "Path", Width: pathWidth},
 	}
 }
@@ -640,7 +640,7 @@ func openCommand(target string) *exec.Cmd {
 	}
 }
 
-func displayCreatedAt(value string) string {
+func displayTimestamp(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "-"
 	}

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 APP_NAME="weightless"
-DEFAULT_REPO="hybridherbst/weightless"
+DEFAULT_REPO="needle-tools/weightless"
 DEFAULT_VERSION="latest"
 INSTALL_DIR="${HOME}/.local/bin"
 REPO="${DEFAULT_REPO}"

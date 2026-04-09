@@ -16,23 +16,19 @@ Find local AI model weights across desktop apps, shared caches, and project fold
 
 ## Install
 
-Homebrew:
-
-```bash
-brew install hybridherbst/tap/weightless
-```
-
 Install script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightless/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash
 ```
 
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hybridherbst/weightless/main/install.sh | bash -s -- -s 1.0.0
+curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.0.0
 ```
+
+Or download a release archive directly from GitHub Releases.
 
 ## Run
 
@@ -108,7 +104,7 @@ Example shape:
       "status": "complete",
       "primary_provider": "ollama",
       "path": "/Users/you/.ollama/models/blobs/sha256-...",
-      "created_at": "2026-04-08T09:15:00+02:00",
+      "timestamp": "2026-04-08T09:15:00+02:00",
       "file_count": 1,
       "all_paths": [
         "/Users/you/.ollama/models/blobs/sha256-..."
@@ -142,13 +138,12 @@ Build from source with the installer:
 
 ## Release
 
-This repo is set up to publish GitHub Releases and a Homebrew formula.
+This repo is set up to publish GitHub Releases directly.
 
 One-time maintainer setup:
 
-1. Create the GitHub repo `hybridherbst/weightless`.
-2. Create the Homebrew tap repo `hybridherbst/homebrew-tap`.
-3. Add the `HOMEBREW_TAP_GITHUB_TOKEN` GitHub Actions secret on `hybridherbst/weightless`.
+1. Create the GitHub repo `needle-tools/weightless`.
+2. Push `main`.
 
 Publish a release:
 
@@ -163,7 +158,6 @@ That release flow will:
 - build macOS, Linux, and Windows binaries
 - publish GitHub Release assets
 - generate checksums
-- update the Homebrew formula in `hybridherbst/homebrew-tap`
 
 ## Changelog
 

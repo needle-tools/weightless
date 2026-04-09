@@ -47,21 +47,5 @@ changelog:
 
 release:
   github:
-    owner: hybridherbst
+    owner: needle-tools
     name: weightless
-
-brews:
-  - name: weightless
-    ids:
-      - weightless
-    homepage: https://github.com/hybridherbst/weightless
-    description: Find local AI model weights across apps, caches, and project folders.
-    license: MIT
-    repository:
-      owner: hybridherbst
-      name: homebrew-tap
-      branch: main
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    test: |
-      system "#{bin}/weightless", "--version"

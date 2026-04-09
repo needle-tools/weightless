@@ -7,10 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"weightless/internal/providers"
@@ -59,7 +57,7 @@ type Artifact struct {
 	CanonicalPath    string   `json:"canonical_path"`
 	SizeBytes        int64    `json:"size_bytes"`
 	SizeHuman        string   `json:"size_human"`
-	CreatedAt        string   `json:"created_at,omitempty"`
+	Timestamp        string   `json:"timestamp,omitempty"`
 	FileCount        int      `json:"file_count,omitempty"`
 	Matches          []Match  `json:"matches"`
 	AllPaths         []string `json:"all_paths"`
@@ -656,7 +654,7 @@ func buildAggregateArtifact(groupPath, modelName string, items []Artifact) Artif
 	aggregate.OwnerReferences = collectOwners(items)
 	aggregate.Notes = collectNotes(items)
 	aggregate.Status = aggregateStatus(items)
-	aggregate.CreatedAt = aggregateCreatedAt(groupPath, items)
+	aggregate.Timestamp = aggregateTimestamp(groupPath, items)
 	aggregate.CanonicalMissing = false
 	for _, item := range items {
 		aggregate.SizeBytes += item.SizeBytes
@@ -666,16 +664,16 @@ func buildAggregateArtifact(groupPath, modelName string, items []Artifact) Artif
 	return aggregate
 }
 
-func aggregateCreatedAt(groupPath string, items []Artifact) string {
-	if createdAt := inferCreatedAt(groupPath); createdAt != "" {
-		return createdAt
+func aggregateTimestamp(groupPath string, items []Artifact) string {
+	if timestamp := inferTimestamp(groupPath); timestamp != "" {
+		return timestamp
 	}
 	var earliest time.Time
 	found := false
 	for _, item := range items {
-		current := item.CreatedAt
+		current := item.Timestamp
 		if current == "" {
-			current = inferCreatedAt(item.Path)
+			current = inferTimestamp(item.Path)
 		}
 		if current == "" {
 			continue
@@ -1055,7 +1053,7 @@ func finalizeArtifacts(artifacts []Artifact) {
 		artifacts[idx].Status = inferStatus(artifacts[idx])
 		artifacts[idx].ModelName = displayModelName(inferModelName(artifacts[idx]))
 		artifacts[idx].Name = artifacts[idx].ModelName
-		artifacts[idx].CreatedAt = inferCreatedAt(artifacts[idx].Path)
+		artifacts[idx].Timestamp = inferTimestamp(artifacts[idx].Path)
 		if artifacts[idx].Name == "" {
 			artifacts[idx].Name = trimKnownExtensions(artifacts[idx].FileName)
 		}
@@ -1332,56 +1330,24 @@ func trimKnownExtensions(name string) string {
 	return out
 }
 
-func inferCreatedAt(path string) string {
-	createdAt, ok := fileCreatedAt(path)
+func inferTimestamp(path string) string {
+	timestamp, ok := fileTimestamp(path)
 	if !ok {
 		return ""
 	}
-	return createdAt.Format(time.RFC3339)
+	return timestamp.Format(time.RFC3339)
 }
 
-func fileCreatedAt(path string) (time.Time, bool) {
+func fileTimestamp(path string) (time.Time, bool) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return time.Time{}, false
-	}
-	if createdAt, ok := birthTimeFromFileInfo(info); ok {
-		return createdAt, true
 	}
 	modifiedAt := info.ModTime()
 	if modifiedAt.IsZero() {
 		return time.Time{}, false
 	}
 	return modifiedAt, true
-}
-
-func birthTimeFromFileInfo(info fs.FileInfo) (time.Time, bool) {
-	sys, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || sys == nil {
-		return time.Time{}, false
-	}
-	value := reflect.ValueOf(sys)
-	if value.Kind() == reflect.Ptr {
-		value = value.Elem()
-	}
-	for _, fieldName := range []string{"Birthtimespec", "Birthtim", "Btim"} {
-		field := value.FieldByName(fieldName)
-		if !field.IsValid() {
-			continue
-		}
-		secField := field.FieldByName("Sec")
-		nsecField := field.FieldByName("Nsec")
-		if !secField.IsValid() || !nsecField.IsValid() {
-			continue
-		}
-		sec := secField.Int()
-		nsec := nsecField.Int()
-		if sec == 0 && nsec == 0 {
-			continue
-		}
-		return time.Unix(sec, nsec), true
-	}
-	return time.Time{}, false
 }
 
 func humanizeOwners(owners []string) []string {
