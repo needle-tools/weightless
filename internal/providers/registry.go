@@ -12,6 +12,7 @@ type LocationSpec struct {
 	MinSizeBytes      int64
 	ForcePathContains []string
 	Notes             string
+	Lazy              bool
 }
 
 func Registry(additionalRoots []string) []LocationSpec {
@@ -225,37 +226,13 @@ func Registry(additionalRoots []string) []LocationSpec {
 			Notes:             "InvokeAI keeps managed models under its InvokeAI root models directory.",
 		},
 		{
-			Provider: "project-local",
-			Name:     "Project-local model roots",
-			Roots: append([]string{
-				"~/git/*/models",
-				"~/git/*/model",
-				"~/git/*/checkpoints",
-				"~/git/*/weights",
-				"~/git/*/loras",
-				"~/git/*/embeddings",
-				"~/code/*/models",
-				"~/code/*/checkpoints",
-				"~/code/*/weights",
-				"~/src/*/models",
-				"~/src/*/checkpoints",
-				"~/src/*/weights",
-				"~/Downloads/models",
-				"~/Downloads/checkpoints",
-				"~/Downloads/weights",
-				"~/Downloads/*/models",
-				"~/Downloads/*/checkpoints",
-				"~/Downloads/*/weights",
-				"~/Documents/models",
-				"~/Documents/checkpoints",
-				"~/Documents/weights",
-				"~/Documents/*/models",
-				"~/Documents/*/checkpoints",
-				"~/Documents/*/weights",
-			}, additionalRoots...),
+			Provider:          "disk-scan",
+			Name:              "Disk scan model roots",
+			Roots:             append(pickOS("~", "~", "%USERPROFILE%"), additionalRoots...),
 			MinSizeBytes:      32 << 20,
 			ForcePathContains: []string{"/models/", "/model/", "/checkpoints/", "/weights/", "/gguf/", "/loras/", "/embeddings/"},
-			Notes:             "Fallback discovery for llama.cpp, flux.c, koboldcpp, ComfyUI, and one-off repos.",
+			Notes:             "Broad on-demand scan across the user home tree for one-off local model files and folders.",
+			Lazy:              true,
 		},
 	}
 

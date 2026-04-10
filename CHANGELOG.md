@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.2 - 2026-04-10
+
+Second patch release for `weightless`.
+
+Fixes:
+
+- Moved the initial provider scan into the TUI so startup and refresh use the same in-app progress flow
+- Turned `disk-scan` into a true on-demand home-tree scan instead of a narrow project-folder sweep
+- Kept `disk-scan` status and layout stable while drilling in and back out
+- Stopped double-counting shared-cache and explicit-provider models by assigning each artifact to a single most-specific provider
+- Made `disk-scan` report only leftover models instead of re-reporting storage already claimed by explicit providers
+
 ## 1.0.1 - 2026-04-10
 
 First patch release for `weightless`.
@@ -8,6 +20,7 @@ Fixes:
 
 - Made scans cwd-independent so running `weightless` from `~` or a repo returns the same results
 - Added startup progress reporting before the TUI opens so long scans no longer look frozen
+- Changed the broad fallback scan into a lazy `disk-scan` provider that only runs when drilled into from Summary
 - Tightened ambiguous file detection so generic `.bin` files and unrelated assets under `models/` are no longer treated as model weights
 - Added regression coverage for ambiguous file detection and cross-provider scan behavior
 
@@ -26,7 +39,7 @@ Provider coverage:
 
 - Added support for major local model stores including Ollama, LM Studio, AnythingLLM, Draw Things, Upscayl, GPT4All, Jan, vLLM, Chrome Built-in AI, NVIDIA, and shared Hugging Face caches
 - Added attribution for `llama.cpp` models that use the shared Hugging Face cache
-- Added project-local discovery for common `models`, `weights`, and `checkpoints` directories
+- Added fallback discovery for common `models`, `weights`, and `checkpoints` directories
 
 Distribution:
 

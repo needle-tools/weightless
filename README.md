@@ -6,7 +6,7 @@ Find local AI model weights across desktop apps, shared caches, and project fold
 
 ## Highlights
 
-- Scans provider-specific model stores and common project-local weight directories
+- Scans provider-specific model stores by default, with an optional on-demand `disk-scan` for broader model folders
 - Groups raw files into logical models so sharded packages show up as one row
 - Shows size, provider, created date, and path
 - Lets you drill from Summary into provider-specific Models
@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/instal
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.0.1
+curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.0.2
 ```
 
 Or download a release archive directly from GitHub Releases.
@@ -79,7 +79,7 @@ Current coverage includes:
 - `comfy`
 - `stable-diffusion-webui`
 - `invokeai`
-- `project-local`
+- `disk-scan` (lazy, on demand from Summary)
 
 ## JSON Output
 
@@ -149,7 +149,7 @@ Publish a release:
 
 ```bash
 git push origin main
-git push origin v1.0.1
+git push origin v1.0.2
 ```
 
 That release flow will:

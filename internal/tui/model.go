@@ -23,6 +23,7 @@ const (
 )
 
 const titleArt = branding.Banner
+const lazyProvider = "disk-scan"
 
 type keyMap struct {
 	Left    key.Binding
@@ -35,8 +36,12 @@ type keyMap struct {
 }
 
 type Model struct {
-	loadReport      func() (scan.Report, error)
+	runScan         func(scan.Config, func(scan.Progress)) (scan.Report, error)
+	scanConfig      scan.Config
 	baseReport      scan.Report
+	diskReport      scan.Report
+	diskLoaded      bool
+	diskRootsLabel  string
 	report          scan.Report
 	activeTab       int
 	providerFilter  string
@@ -56,6 +61,9 @@ type Model struct {
 	filterLineStyle lipgloss.Style
 	statusLineStyle lipgloss.Style
 	statusMessage   string
+	scanCh          chan tea.Msg
+	scanToken       int
+	scanningScope   string
 }
 
 type helpBindings struct {
@@ -70,16 +78,25 @@ func (h helpBindings) FullHelp() [][]key.Binding {
 	return [][]key.Binding{h.short}
 }
 
-type refreshDoneMsg struct {
+type scanProgressMsg struct {
+	token    int
+	scope    string
+	progress scan.Progress
+}
+
+type scanDoneMsg struct {
+	token  int
+	scope  string
 	report scan.Report
 	err    error
 }
 
-func New(report scan.Report, loadReport func() (scan.Report, error)) Model {
+func New(scanConfig scan.Config, runScan func(scan.Config, func(scan.Progress)) (scan.Report, error)) *Model {
 	m := Model{
-		loadReport: loadReport,
-		baseReport: report,
-		report:     report,
+		runScan:    runScan,
+		scanConfig: scanConfig,
+		baseReport: emptyProviderReport(""),
+		report:     emptyProviderReport(""),
 		help:       help.New(),
 		keys: keyMap{
 			Left:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←", "prev tab")),
@@ -97,61 +114,108 @@ func New(report scan.Report, loadReport func() (scan.Report, error)) Model {
 		filterLineStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("81")),
 		statusLineStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
 	}
+	m.diskRootsLabel = diskRootsLabel(scanConfig)
 	m.rebuildTables()
-	return m
+	return &m
 }
 
-func (m Model) Init() tea.Cmd {
-	return nil
+func (m *Model) Init() tea.Cmd {
+	if m.runScan == nil {
+		return nil
+	}
+	return m.startScan("initial", m.baseScanConfig())
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.rebuildTables()
-	case refreshDoneMsg:
-		if msg.err != nil {
-			m.statusMessage = "Refresh failed: " + msg.err.Error()
+	case scanProgressMsg:
+		if msg.token != m.scanToken {
 			return m, nil
 		}
-		m.statusMessage = fmt.Sprintf("Refreshed %s", time.Now().Format("15:04:05"))
-		previousTab := m.activeTab
-		m.baseReport = msg.report
-		if m.providerFilter != "" && hasProvider(msg.report.Summary, m.providerFilter) {
-			m.report = filterReport(msg.report, m.providerFilter)
-			m.providerRoot = providerRootFor(msg.report, m.providerFilter)
-		} else {
-			m.providerFilter = ""
-			m.providerRoot = ""
-			m.report = msg.report
+		m.statusMessage = formatInlineProgress(msg.progress)
+		if m.scanCh != nil {
+			return m, waitForScanMsg(m.scanCh)
 		}
-		if previousTab >= len(m.tables) {
-			previousTab = tabSummary
+		return m, nil
+	case scanDoneMsg:
+		if msg.token != m.scanToken {
+			return m, nil
 		}
-		if previousTab < 0 {
-			previousTab = tabSummary
+		m.scanCh = nil
+		m.scanningScope = ""
+		if msg.err != nil {
+			m.statusMessage = "Scan failed: " + msg.err.Error()
+			return m, nil
 		}
-		m.activeTab = previousTab
-		m.rebuildTables()
-		if m.providerFilter == "" {
-			m.setTableCursor(tabSummary, m.summaryCursor)
+		switch msg.scope {
+		case lazyProvider:
+			m.diskReport = msg.report
+			m.diskLoaded = true
+			m.statusMessage = fmt.Sprintf("Disk scan finished %s", time.Now().Format("15:04:05"))
+			if m.providerFilter == lazyProvider {
+				m.report = filterReport(msg.report, lazyProvider)
+				m.providerRoot = m.diskRootsLabel
+				m.rebuildTables()
+			} else {
+				m.rebuildTables()
+			}
+		default:
+			if msg.scope == "initial" {
+				m.statusMessage = fmt.Sprintf("Scan finished %s", time.Now().Format("15:04:05"))
+			} else {
+				m.statusMessage = fmt.Sprintf("Refreshed %s", time.Now().Format("15:04:05"))
+			}
+			previousTab := m.activeTab
+			m.baseReport = msg.report
+			if m.providerFilter == "" {
+				m.report = msg.report
+			} else if m.providerFilter == lazyProvider {
+				if m.diskLoaded {
+					m.report = filterReport(m.diskReport, lazyProvider)
+					m.providerRoot = m.diskRootsLabel
+				} else {
+					m.report = emptyProviderReport(lazyProvider)
+				}
+			} else if hasProvider(msg.report.Summary, m.providerFilter) {
+				m.report = filterReport(msg.report, m.providerFilter)
+				m.providerRoot = providerRootFor(msg.report, m.providerFilter)
+			} else {
+				m.providerFilter = ""
+				m.providerRoot = ""
+				m.report = msg.report
+			}
+			if previousTab >= len(m.tables) {
+				previousTab = tabSummary
+			}
+			if previousTab < 0 {
+				previousTab = tabSummary
+			}
+			m.activeTab = previousTab
+			m.rebuildTables()
+			if m.providerFilter == "" {
+				m.setTableCursor(tabSummary, m.summaryCursor)
+			}
 		}
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Refresh):
-			if m.loadReport == nil {
+			if m.runScan == nil || m.scanCh != nil {
 				return m, nil
 			}
-			m.statusMessage = "Refreshing..."
-			return m, func() tea.Msg {
-				report, err := m.loadReport()
-				return refreshDoneMsg{report: report, err: err}
+			if m.providerFilter == lazyProvider {
+				m.report = emptyProviderReport(lazyProvider)
+				m.rebuildTables()
+				return m, m.startScan(lazyProvider, m.lazyScanConfig())
 			}
+			return m, m.startScan("base", m.baseScanConfig())
 		case key.Matches(msg, m.keys.Back):
+			m.clearTransientStatus()
 			if m.providerFilter != "" {
 				m.providerFilter = ""
 				m.providerRoot = ""
@@ -161,28 +225,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setTableCursor(tabSummary, m.summaryCursor)
 			}
 		case key.Matches(msg, m.keys.Left):
+			m.clearTransientStatus()
 			if m.activeTab == 0 {
 				m.activeTab = len(m.tables) - 1
 			} else {
 				m.activeTab--
 			}
 		case key.Matches(msg, m.keys.Right):
+			m.clearTransientStatus()
 			m.activeTab = (m.activeTab + 1) % len(m.tables)
 		case key.Matches(msg, m.keys.Drill):
+			m.clearTransientStatus()
 			if m.activeTab == tabSummary {
 				row := m.tables[tabSummary].Cursor()
-				if row >= 0 && row < len(m.report.Summary) {
+				summaryProviders := m.summaryRowProviders()
+				if row >= 0 && row < len(summaryProviders) {
 					m.summaryCursor = row
-					m.providerFilter = m.report.Summary[row].Provider
-					m.report = filterReport(m.baseReport, m.providerFilter)
-					m.providerRoot = providerRootFor(m.baseReport, m.providerFilter)
+					m.providerFilter = summaryProviders[row]
+					if m.providerFilter == lazyProvider {
+						m.providerRoot = m.diskRootsLabel
+						if m.diskLoaded {
+							m.report = filterReport(m.diskReport, lazyProvider)
+						} else {
+							m.report = emptyProviderReport(lazyProvider)
+						}
+					} else {
+						m.report = filterReport(m.baseReport, m.providerFilter)
+						m.providerRoot = providerRootFor(m.baseReport, m.providerFilter)
+					}
 					m.activeTab = tabModels
 					m.rebuildTables()
+					if m.providerFilter == lazyProvider && !m.diskLoaded && m.runScan != nil {
+						return m, m.startScan(lazyProvider, m.lazyScanConfig())
+					}
 				}
 			}
 		case key.Matches(msg, m.keys.Open):
+			m.clearTransientStatus()
 			return m, openSelected(m.activeTab, m.tables, m.openPaths)
 		default:
+			m.clearTransientStatus()
 			var cmd tea.Cmd
 			m.tables[m.activeTab], cmd = m.tables[m.activeTab].Update(msg)
 			return m, cmd
@@ -191,7 +273,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m *Model) View() string {
 	tabs := []string{"Summary", "Models"}
 	var renderedTabs []string
 	for i, label := range tabs {
@@ -211,21 +293,15 @@ func (m Model) View() string {
 	if titleText != "weightless" {
 		leading = ""
 	}
-	summary := fmt.Sprintf(
-		"%s across %d models",
-		m.liveStyle.Render(m.report.TotalBytesHuman),
-		m.report.TotalArtifacts,
-	)
+	totalBytes, totalArtifacts := m.currentTotals()
+	summary := fmt.Sprintf("%s across %d models", m.liveStyle.Render(humanBytes(totalBytes)), totalArtifacts)
 
-	filterLine := ""
+	filterText := ""
 	if m.providerFilter != "" {
-		filterLine = m.filterLineStyle.Render("Provider: " + m.providerFilter + ", path: " + m.providerRoot)
+		filterText = "Provider: " + m.providerFilter + ", path: " + m.providerRoot
 	}
-
-	statusLine := ""
-	if strings.TrimSpace(m.statusMessage) != "" {
-		statusLine = m.statusLineStyle.Render(m.statusMessage)
-	}
+	filterLine := stableLine(m.filterLineStyle, filterText)
+	statusLine := stableLine(m.statusLineStyle, m.statusMessage)
 
 	body := m.tables[m.activeTab].View()
 	footer := m.footerView()
@@ -243,7 +319,7 @@ func (m Model) View() string {
 	)
 }
 
-func (m Model) footerView() string {
+func (m *Model) footerView() string {
 	left := m.help.View(helpBindings{short: m.helpBindings()})
 	right := m.liveStyle.Copy().Bold(false).Render("by 🌵 needle")
 	if strings.TrimSpace(left) == "" {
@@ -271,7 +347,7 @@ func (m *Model) rebuildTables() {
 	if len(m.tables) > 0 {
 		m.tableCursors = captureTableCursors(m.tables)
 	}
-	m.tables, m.openPaths = buildTables(m.baseReport, m.report, m.width, m.providerFilter, m.providerRoot)
+	m.tables, m.openPaths = buildTables(m.baseReport, m.report, m.width, m.providerFilter, m.providerRoot, m.diskLoaded, m.diskSummary(), m.diskRootsLabel)
 	tableHeight := m.availableTableHeight()
 	for i := range m.tables {
 		m.tables[i].SetWidth(max(40, m.width-2))
@@ -282,26 +358,27 @@ func (m *Model) rebuildTables() {
 	}
 }
 
-func (m Model) availableTableHeight() int {
+func (m *Model) availableTableHeight() int {
 	if m.height <= 0 {
 		return 8
 	}
 
 	titleText := renderTitle(m.width)
 	header := strings.Join([]string{"Summary", "Models"}, " ")
-	summary := fmt.Sprintf("%s across %d models", m.report.TotalBytesHuman, m.report.TotalArtifacts)
-	filterLine := ""
+	totalBytes, totalArtifacts := m.currentTotals()
+	summary := fmt.Sprintf("%s across %d models", humanBytes(totalBytes), totalArtifacts)
+	filterLine := " "
 	if m.providerFilter != "" {
 		filterLine = "Provider: " + m.providerFilter + ", path: " + m.providerRoot
 	}
-	statusLine := strings.TrimSpace(m.statusMessage)
+	statusLine := " "
+	if strings.TrimSpace(m.statusMessage) != "" {
+		statusLine = m.statusMessage
+	}
 	footer := m.help.View(helpBindings{short: m.helpBindings()})
 
 	chromeHeight := 0
 	for _, block := range []string{titleText, header, summary, filterLine, statusLine, footer} {
-		if strings.TrimSpace(block) == "" {
-			continue
-		}
 		chromeHeight += lipgloss.Height(block)
 	}
 
@@ -312,7 +389,7 @@ func (m Model) availableTableHeight() int {
 	return remaining
 }
 
-func buildTables(base scan.Report, report scan.Report, width int, providerFilter, providerRoot string) ([]table.Model, [][]string) {
+func buildTables(base scan.Report, report scan.Report, width int, providerFilter, providerRoot string, diskLoaded bool, diskSummary scan.ProviderSummary, diskRootsLabel string) ([]table.Model, [][]string) {
 	var paths [][]string
 	summaryCols := summaryColumns(width)
 	modelCols := artifactColumns(width, providerFilter != "")
@@ -320,9 +397,9 @@ func buildTables(base scan.Report, report scan.Report, width int, providerFilter
 		newTable(
 			summaryCols,
 			func() []table.Row {
-				rows := make([]table.Row, 0, len(report.Summary))
-				tabPaths := make([]string, 0, len(report.Summary))
-				for _, item := range report.Summary {
+				rows := make([]table.Row, 0, len(base.Summary)+1)
+				tabPaths := make([]string, 0, len(base.Summary)+1)
+				for _, item := range base.Summary {
 					root := providerRootFor(base, item.Provider)
 					rows = append(rows, table.Row{
 						item.Provider,
@@ -332,6 +409,14 @@ func buildTables(base scan.Report, report scan.Report, width int, providerFilter
 					})
 					tabPaths = append(tabPaths, root)
 				}
+				modelCount := "?"
+				size := "?"
+				if diskLoaded {
+					modelCount = fmt.Sprintf("%d", diskSummary.Artifacts)
+					size = diskSummary.BytesHuman
+				}
+				rows = append(rows, table.Row{lazyProvider, modelCount, size, diskRootsLabel})
+				tabPaths = append(tabPaths, "")
 				paths = append(paths, tabPaths)
 				return rows
 			}(),
@@ -416,6 +501,21 @@ func filterReport(base scan.Report, provider string) scan.Report {
 	}
 	out.TotalBytesHuman = humanBytes(out.TotalBytes)
 	return out
+}
+
+func emptyProviderReport(provider string) scan.Report {
+	report := scan.Report{
+		Summary:         nil,
+		Artifacts:       nil,
+		Locations:       nil,
+		TotalArtifacts:  0,
+		TotalBytes:      0,
+		TotalBytesHuman: humanBytes(0),
+	}
+	if strings.TrimSpace(provider) != "" {
+		report.Summary = []scan.ProviderSummary{{Provider: provider}}
+	}
+	return report
 }
 
 func filterSummaries(items []scan.ProviderSummary, provider string) []scan.ProviderSummary {
@@ -527,7 +627,7 @@ func relativeToRoot(path, root string) string {
 	return path
 }
 
-func (m Model) helpBindings() []key.Binding {
+func (m *Model) helpBindings() []key.Binding {
 	bindings := []key.Binding{m.keys.Left, m.keys.Right}
 	switch m.activeTab {
 	case tabSummary:
@@ -541,6 +641,129 @@ func (m Model) helpBindings() []key.Binding {
 	}
 	bindings = append(bindings, m.keys.Quit)
 	return bindings
+}
+
+func (m *Model) summaryRowProviders() []string {
+	out := make([]string, 0, len(m.baseReport.Summary)+1)
+	for _, item := range m.baseReport.Summary {
+		out = append(out, item.Provider)
+	}
+	out = append(out, lazyProvider)
+	return out
+}
+
+func (m *Model) diskSummary() scan.ProviderSummary {
+	if !m.diskLoaded {
+		return scan.ProviderSummary{Provider: lazyProvider}
+	}
+	for _, item := range m.diskReport.Summary {
+		if item.Provider == lazyProvider {
+			return item
+		}
+	}
+	return scan.ProviderSummary{Provider: lazyProvider, BytesHuman: humanBytes(0)}
+}
+
+func (m *Model) currentTotals() (int64, int) {
+	if m.providerFilter != "" {
+		return m.report.TotalBytes, m.report.TotalArtifacts
+	}
+	totalBytes := m.baseReport.TotalBytes
+	totalArtifacts := m.baseReport.TotalArtifacts
+	if m.diskLoaded {
+		totalBytes += m.diskReport.TotalBytes
+		totalArtifacts += m.diskReport.TotalArtifacts
+	}
+	return totalBytes, totalArtifacts
+}
+
+func (m *Model) baseScanConfig() scan.Config {
+	cfg := m.scanConfig
+	cfg.Progress = nil
+	cfg.Providers = nil
+	return cfg
+}
+
+func (m *Model) lazyScanConfig() scan.Config {
+	cfg := m.scanConfig
+	cfg.Progress = nil
+	cfg.Providers = []string{lazyProvider}
+	return cfg
+}
+
+func (m *Model) startScan(scope string, cfg scan.Config) tea.Cmd {
+	if m.runScan == nil {
+		return nil
+	}
+	m.scanToken++
+	token := m.scanToken
+	ch := make(chan tea.Msg)
+	m.scanCh = ch
+	m.scanningScope = scope
+	if scope == lazyProvider {
+		m.statusMessage = "Scanning disk-scan..."
+	} else if scope == "initial" {
+		m.statusMessage = "Scanning providers..."
+	} else {
+		m.statusMessage = "Refreshing..."
+	}
+	return tea.Batch(
+		func() tea.Msg {
+			go func() {
+				report, err := m.runScan(cfg, func(progress scan.Progress) {
+					ch <- scanProgressMsg{token: token, scope: scope, progress: progress}
+				})
+				ch <- scanDoneMsg{token: token, scope: scope, report: report, err: err}
+				close(ch)
+			}()
+			return nil
+		},
+		waitForScanMsg(ch),
+	)
+}
+
+func waitForScanMsg(ch <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
+func formatInlineProgress(progress scan.Progress) string {
+	if progress.Message != "" {
+		return progress.Message
+	}
+	if progress.Total > 0 && progress.Current > 0 {
+		return fmt.Sprintf("[%d/%d] %s %s %s", progress.Current, progress.Total, progress.Provider, progress.Root, progress.CurrentPath)
+	}
+	return strings.TrimSpace(strings.Join([]string{progress.Provider, progress.Root, progress.CurrentPath}, " "))
+}
+
+func diskRootsLabel(cfg scan.Config) string {
+	roots, err := scan.ResolvedProviderRoots(cfg, lazyProvider)
+	if err != nil || len(roots) == 0 {
+		return "(no matching roots)"
+	}
+	return strings.Join(roots, ", ")
+}
+
+func (m *Model) clearTransientStatus() {
+	if m.scanCh != nil {
+		return
+	}
+	if strings.HasPrefix(m.statusMessage, "Disk scan finished ") || strings.HasPrefix(m.statusMessage, "Refreshed ") || strings.HasPrefix(m.statusMessage, "Scan finished ") {
+		m.statusMessage = ""
+	}
+}
+
+func stableLine(style lipgloss.Style, value string) string {
+	if strings.TrimSpace(value) == "" {
+		return style.Render(" ")
+	}
+	return style.Render(value)
 }
 
 func hasProvider(items []scan.ProviderSummary, provider string) bool {

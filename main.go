@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -47,7 +46,6 @@ func main() {
 		Providers:         splitCSV(*providers),
 		IncludeHiddenDirs: true,
 	}
-	runtimeCfg := cfg
 
 	if *jsonMode {
 		report, err := scan.Run(cfg)
@@ -64,17 +62,9 @@ func main() {
 		return
 	}
 
-	cfg.Progress = terminalProgress(os.Stderr)
-	report, err := scan.Run(cfg)
-	if err != nil {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "scan failed: %v\n", err)
-		os.Exit(1)
-	}
-	clearTerminalProgress(os.Stderr)
-
-	model := tui.New(report, func() (scan.Report, error) {
-		return scan.Run(runtimeCfg)
+	model := tui.New(cfg, func(cfg scan.Config, progress func(scan.Progress)) (scan.Report, error) {
+		cfg.Progress = progress
+		return scan.Run(cfg)
 	})
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "tui failed: %v\n", err)
@@ -95,26 +85,4 @@ func splitCSV(value string) []string {
 		}
 	}
 	return out
-}
-
-func terminalProgress(out *os.File) func(string) {
-	var mu sync.Mutex
-	var lastWidth int
-	return func(message string) {
-		mu.Lock()
-		defer mu.Unlock()
-		line := "Scanning... " + message
-		padding := ""
-		if len(line) < lastWidth {
-			padding = strings.Repeat(" ", lastWidth-len(line))
-		}
-		if len(line) > lastWidth {
-			lastWidth = len(line)
-		}
-		fmt.Fprintf(out, "\r%s%s", line, padding)
-	}
-}
-
-func clearTerminalProgress(out *os.File) {
-	fmt.Fprint(out, "\r\033[2K")
 }

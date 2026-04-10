@@ -41,7 +41,18 @@ type Config struct {
 	AdditionalRoots   []string
 	Providers         []string
 	IncludeHiddenDirs bool
-	Progress          func(string)
+	Progress          func(Progress)
+}
+
+type Progress struct {
+	Phase          string `json:"phase,omitempty"`
+	Current        int    `json:"current,omitempty"`
+	Total          int    `json:"total,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	Root           string `json:"root,omitempty"`
+	CurrentPath    string `json:"current_path,omitempty"`
+	FoundArtifacts int    `json:"found_artifacts,omitempty"`
+	Message        string `json:"message,omitempty"`
 }
 
 type Match struct {
@@ -108,6 +119,17 @@ type record struct {
 	key string
 }
 
+type scanRoot struct {
+	spec providers.LocationSpec
+	root string
+}
+
+type resolvedProviderRoot struct {
+	provider string
+	location string
+	root     string
+}
+
 func Run(cfg Config) (Report, error) {
 	host, _ := os.Hostname()
 	cwd, err := os.Getwd()
@@ -119,15 +141,13 @@ func Run(cfg Config) (Report, error) {
 		return Report{}, err
 	}
 
-	locationSpecs := filterProviders(providers.Registry(cfg.AdditionalRoots), cfg.Providers)
+	allSpecs := providers.Registry(cfg.AdditionalRoots)
+	locationSpecs := filterProviders(allSpecs, cfg.Providers)
 	locationSummaries := make([]LocationSummary, 0)
 	records := map[string]*record{}
+	scanRoots := make([]scanRoot, 0)
 
-	totalProviders := len(locationSpecs)
-	for idx, spec := range locationSpecs {
-		if cfg.Progress != nil {
-			cfg.Progress(fmt.Sprintf("[%d/%d] %s", idx+1, totalProviders, spec.Provider))
-		}
+	for _, spec := range locationSpecs {
 		for _, rootTemplate := range spec.Roots {
 			roots, ok := expandRoots(rootTemplate, home, cwd)
 			if !ok {
@@ -146,13 +166,36 @@ func Run(cfg Config) (Report, error) {
 				if !exists {
 					continue
 				}
-				if cfg.Progress != nil {
-					cfg.Progress(fmt.Sprintf("[%d/%d] %s: %s", idx+1, totalProviders, spec.Provider, root))
-				}
-				if err := walkRoot(root, spec, records, cfg.Progress); err != nil {
-					return Report{}, err
-				}
+				scanRoots = append(scanRoots, scanRoot{spec: spec, root: root})
 			}
+		}
+	}
+
+	totalRoots := len(scanRoots)
+	for idx, item := range scanRoots {
+		if cfg.Progress != nil {
+			cfg.Progress(Progress{
+				Phase:          "scanning",
+				Current:        idx + 1,
+				Total:          totalRoots,
+				Provider:       item.spec.Provider,
+				Root:           item.root,
+				FoundArtifacts: len(records),
+			})
+		}
+		if err := walkRoot(item.root, item.spec, records, func(progress Progress) {
+			if cfg.Progress == nil {
+				return
+			}
+			progress.Phase = "scanning"
+			progress.Current = idx + 1
+			progress.Total = totalRoots
+			progress.Provider = item.spec.Provider
+			progress.Root = item.root
+			progress.FoundArtifacts = len(records)
+			cfg.Progress(progress)
+		}); err != nil {
+			return Report{}, err
 		}
 	}
 
@@ -162,7 +205,11 @@ func Run(cfg Config) (Report, error) {
 	finalizeArtifacts(rawArtifacts)
 
 	artifacts := aggregateArtifacts(rawArtifacts)
-	enrichLlamaCppAttribution(artifacts)
+	assignPrimaryProviders(artifacts)
+	if providerRequested(cfg.Providers, "disk-scan") {
+		claimRoots := resolveProviderRoots(nonLazySpecs(allSpecs), home, cwd)
+		artifacts = filterExclusiveDiskArtifacts(artifacts, claimRoots)
+	}
 	summary := summarizeProviders(locationSpecs, artifacts)
 	report := Report{
 		GeneratedAt:       time.Now(),
@@ -180,9 +227,111 @@ func Run(cfg Config) (Report, error) {
 	report.Locations = enrichLocationSizes(report.Locations, report.Artifacts)
 	report.LocationSummaries = report.Locations
 	if cfg.Progress != nil {
-		cfg.Progress(fmt.Sprintf("Found %d models across %d providers", report.TotalArtifacts, len(report.Summary)))
+		cfg.Progress(Progress{
+			Phase:          "complete",
+			Current:        totalRoots,
+			Total:          totalRoots,
+			FoundArtifacts: report.TotalArtifacts,
+			Message:        fmt.Sprintf("Found %d models across %d providers", report.TotalArtifacts, len(report.Summary)),
+		})
 	}
 	return report, nil
+}
+
+func providerRequested(filters []string, provider string) bool {
+	for _, filter := range filters {
+		if strings.EqualFold(strings.TrimSpace(filter), provider) {
+			return true
+		}
+	}
+	return false
+}
+
+func nonLazySpecs(specs []providers.LocationSpec) []providers.LocationSpec {
+	out := make([]providers.LocationSpec, 0, len(specs))
+	for _, spec := range specs {
+		if spec.Lazy {
+			continue
+		}
+		out = append(out, spec)
+	}
+	return out
+}
+
+func resolveProviderRoots(specs []providers.LocationSpec, home, cwd string) []resolvedProviderRoot {
+	seen := map[string]struct{}{}
+	out := make([]resolvedProviderRoot, 0)
+	for _, spec := range specs {
+		for _, rootTemplate := range spec.Roots {
+			roots, ok := expandRoots(rootTemplate, home, cwd)
+			if !ok {
+				continue
+			}
+			for _, root := range roots {
+				root = filepath.Clean(root)
+				info, err := os.Stat(root)
+				if err != nil || !info.IsDir() {
+					continue
+				}
+				key := spec.Provider + "\x00" + root
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+				out = append(out, resolvedProviderRoot{
+					provider: spec.Provider,
+					location: spec.Name,
+					root:     root,
+				})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i].root) == len(out[j].root) {
+			if out[i].provider == out[j].provider {
+				return out[i].root < out[j].root
+			}
+			return providerPriority(out[i].provider) < providerPriority(out[j].provider)
+		}
+		return len(out[i].root) > len(out[j].root)
+	})
+	return out
+}
+
+func ResolvedProviderRoots(cfg Config, provider string) ([]string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	locationSpecs := filterProviders(providers.Registry(cfg.AdditionalRoots), []string{provider})
+	seen := map[string]struct{}{}
+	out := make([]string, 0)
+	for _, spec := range locationSpecs {
+		for _, rootTemplate := range spec.Roots {
+			roots, ok := expandRoots(rootTemplate, home, cwd)
+			if !ok {
+				continue
+			}
+			for _, root := range roots {
+				root = filepath.Clean(root)
+				info, statErr := os.Stat(root)
+				if statErr != nil || !info.IsDir() {
+					continue
+				}
+				if _, exists := seen[root]; exists {
+					continue
+				}
+				seen[root] = struct{}{}
+				out = append(out, root)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func expandPath(value, home, cwd string) (string, bool) {
@@ -236,7 +385,7 @@ func hasGlob(value string) bool {
 	return strings.ContainsAny(value, "*?[")
 }
 
-func walkRoot(root string, spec providers.LocationSpec, records map[string]*record, progress func(string)) error {
+func walkRoot(root string, spec providers.LocationSpec, records map[string]*record, progress func(Progress)) error {
 	lastProgress := time.Now()
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -249,7 +398,9 @@ func walkRoot(root string, spec providers.LocationSpec, records map[string]*reco
 			} else {
 				rel = filepath.Base(root)
 			}
-			progress(fmt.Sprintf("%s: %s", spec.Provider, rel))
+			progress(Progress{
+				CurrentPath: rel,
+			})
 			lastProgress = time.Now()
 		}
 		if d.IsDir() {
@@ -323,7 +474,7 @@ func shouldSkipDir(root, path, base string, spec providers.LocationSpec) bool {
 		return true
 	}
 
-	if spec.Provider != "project-local" {
+	if spec.Provider != "disk-scan" {
 		return false
 	}
 
@@ -564,8 +715,8 @@ func providerAggregationIdentity(artifact Artifact) (string, string, string, boo
 		return drawThingsAggregationIdentity(artifact.Path)
 	case "huggingface":
 		return huggingFaceAggregationIdentity(artifact.Path)
-	case "project-local":
-		return projectLocalAggregationIdentity(artifact.Path)
+	case "disk-scan":
+		return diskScanAggregationIdentity(artifact.Path)
 	}
 	if artifact.PrimaryProvider == "ollama" && artifact.ModelName != "" {
 		return "ollama|" + artifact.ModelName, artifact.Path, artifact.ModelName, true
@@ -659,7 +810,7 @@ func huggingFaceAggregationIdentity(path string) (string, string, string, bool) 
 	return "", "", "", false
 }
 
-func projectLocalAggregationIdentity(path string) (string, string, string, bool) {
+func diskScanAggregationIdentity(path string) (string, string, string, bool) {
 	slash := filepath.ToSlash(path)
 	for _, marker := range []string{"/models/", "/model/", "/checkpoints/", "/weights/", "/loras/", "/embeddings/"} {
 		idx := strings.Index(slash, marker)
@@ -680,7 +831,7 @@ func projectLocalAggregationIdentity(path string) (string, string, string, bool)
 		}
 		groupRel := filepath.Join(groupParts...)
 		groupPath := filepath.Clean(filepath.Join(prefix, groupRel))
-		return "project-local|" + groupPath, filepath.FromSlash(groupPath), modelName, true
+		return "disk-scan|" + groupPath, filepath.FromSlash(groupPath), modelName, true
 	}
 	return "", "", "", false
 }
@@ -832,22 +983,85 @@ func aggregateStatus(artifacts []Artifact) string {
 	}
 }
 
-func enrichLlamaCppAttribution(artifacts []Artifact) {
+func assignPrimaryProviders(artifacts []Artifact) {
 	repos := llamaCppCachedRepos()
-	if len(repos) == 0 {
-		return
-	}
 	for idx := range artifacts {
-		if artifacts[idx].PrimaryProvider != "huggingface" {
-			continue
+		provider, location := choosePrimaryProvider(artifacts[idx], repos)
+		artifacts[idx].PrimaryProvider = provider
+		if location != "" {
+			artifacts[idx].PrimaryLocation = location
 		}
-		if !artifactMatchesAnyRepo(artifacts[idx], repos) {
-			continue
+		if provider == "llama.cpp" {
+			artifacts[idx].Notes = appendUniqueString(artifacts[idx].Notes, "Shared Hugging Face cache referenced by llama-server.")
+			artifacts[idx].OwnerReferences = appendUniqueString(artifacts[idx].OwnerReferences, "llama-server")
 		}
-		artifacts[idx].PrimaryProvider = "llama.cpp"
-		artifacts[idx].PrimaryLocation = "llama-server shared cache"
-		artifacts[idx].Notes = appendUniqueString(artifacts[idx].Notes, "Shared Hugging Face cache referenced by llama-server.")
-		artifacts[idx].OwnerReferences = appendUniqueString(artifacts[idx].OwnerReferences, "llama-server")
+		applyProviderNameOverrides(&artifacts[idx])
+	}
+}
+
+func choosePrimaryProvider(artifact Artifact, llamaRepos []string) (string, string) {
+	bestProvider := artifact.PrimaryProvider
+	bestLocation := artifact.PrimaryLocation
+	bestRank := providerPriority(bestProvider)
+	for _, match := range artifact.Matches {
+		rank := providerPriority(match.Provider)
+		if rank < bestRank {
+			bestProvider = match.Provider
+			bestLocation = match.Location
+			bestRank = rank
+		}
+	}
+	if len(llamaRepos) > 0 && artifactMatchesAnyRepo(artifact, llamaRepos) {
+		if providerPriority("llama.cpp") < bestRank {
+			bestProvider = "llama.cpp"
+			bestLocation = "llama-server shared cache"
+		}
+	}
+	return bestProvider, bestLocation
+}
+
+func providerPriority(provider string) int {
+	switch provider {
+	case "llama.cpp":
+		return 10
+	case "unsloth-studio":
+		return 20
+	case "ollama":
+		return 30
+	case "lm-studio":
+		return 40
+	case "anythingllm":
+		return 50
+	case "draw-things":
+		return 60
+	case "upscayl":
+		return 70
+	case "jan":
+		return 80
+	case "gpt4all":
+		return 90
+	case "vllm":
+		return 100
+	case "node-llama-cpp":
+		return 110
+	case "chrome-built-in-ai":
+		return 120
+	case "nvidia":
+		return 130
+	case "text-generation-webui":
+		return 140
+	case "comfy":
+		return 150
+	case "stable-diffusion-webui":
+		return 160
+	case "invokeai":
+		return 170
+	case "huggingface":
+		return 900
+	case "disk-scan":
+		return 1000
+	default:
+		return 500
 	}
 }
 
@@ -923,6 +1137,48 @@ func artifactMatchesRepo(artifact Artifact, repo string) bool {
 		}
 	}
 	return normalizedContains(artifact.ModelName, displayModelName(repo))
+}
+
+func filterExclusiveDiskArtifacts(artifacts []Artifact, claimRoots []resolvedProviderRoot) []Artifact {
+	llamaRepos := llamaCppCachedRepos()
+	out := make([]Artifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact.PrimaryProvider != "disk-scan" {
+			continue
+		}
+		if claimedByExplicitProvider(artifact, claimRoots, llamaRepos) {
+			continue
+		}
+		out = append(out, artifact)
+	}
+	return out
+}
+
+func claimedByExplicitProvider(artifact Artifact, claimRoots []resolvedProviderRoot, llamaRepos []string) bool {
+	if len(llamaRepos) > 0 && artifactMatchesAnyRepo(artifact, llamaRepos) {
+		return true
+	}
+	for _, root := range claimRoots {
+		if root.provider == "disk-scan" {
+			continue
+		}
+		if artifactTouchesRoot(artifact, root.root) {
+			return true
+		}
+	}
+	return false
+}
+
+func artifactTouchesRoot(artifact Artifact, root string) bool {
+	root = filepath.Clean(root)
+	candidates := append([]string{artifact.Path, artifact.CanonicalPath}, artifact.AllPaths...)
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(candidate)
+		if candidate == root || strings.HasPrefix(candidate, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func appendUniqueString(values []string, value string) []string {
@@ -1483,7 +1739,14 @@ func collectPaths(artifacts []Artifact) []string {
 
 func filterProviders(specs []providers.LocationSpec, filters []string) []providers.LocationSpec {
 	if len(filters) == 0 {
-		return specs
+		out := make([]providers.LocationSpec, 0, len(specs))
+		for _, spec := range specs {
+			if spec.Lazy {
+				continue
+			}
+			out = append(out, spec)
+		}
+		return out
 	}
 	allowed := map[string]struct{}{}
 	for _, value := range filters {
