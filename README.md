@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/instal
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.0.0
+curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.0.1
 ```
 
 Or download a release archive directly from GitHub Releases.
@@ -149,7 +149,7 @@ Publish a release:
 
 ```bash
 git push origin main
-git push origin v1.0.0
+git push origin v1.0.1
 ```
 
 That release flow will:
