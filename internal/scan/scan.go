@@ -2,13 +2,17 @@ package scan
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"weightless/internal/providers"
@@ -62,6 +66,7 @@ type Match struct {
 }
 
 type Artifact struct {
+	Category         string   `json:"category"`
 	Name             string   `json:"name"`
 	FileName         string   `json:"file_name"`
 	ModelName        string   `json:"model_name,omitempty"`
@@ -92,6 +97,7 @@ type ProviderSummary struct {
 }
 
 type LocationSummary struct {
+	Category   string `json:"category"`
 	Provider   string `json:"provider"`
 	Name       string `json:"name"`
 	Root       string `json:"root"`
@@ -100,10 +106,20 @@ type LocationSummary struct {
 	BytesHuman string `json:"size_human"`
 }
 
+type CategorySummary struct {
+	Category        string `json:"category"`
+	Artifacts       int    `json:"artifacts"`
+	Bytes           int64  `json:"size_bytes"`
+	BytesHuman      string `json:"size_human"`
+	ProviderCount   int    `json:"provider_count"`
+	LargestProvider string `json:"largest_provider,omitempty"`
+}
+
 type Report struct {
 	GeneratedAt       time.Time         `json:"generated_at"`
 	Host              string            `json:"host"`
 	WorkingDir        string            `json:"working_dir"`
+	Categories        []CategorySummary `json:"categories"`
 	Summary           []ProviderSummary `json:"summary"`
 	Artifacts         []Artifact        `json:"artifacts"`
 	Locations         []LocationSummary `json:"locations"`
@@ -122,6 +138,11 @@ type record struct {
 type scanRoot struct {
 	spec providers.LocationSpec
 	root string
+}
+
+type rootScanResult struct {
+	rec *record
+	err error
 }
 
 type resolvedProviderRoot struct {
@@ -146,6 +167,7 @@ func Run(cfg Config) (Report, error) {
 	locationSummaries := make([]LocationSummary, 0)
 	records := map[string]*record{}
 	scanRoots := make([]scanRoot, 0)
+	rootArtifactScanRoots := make([]scanRoot, 0)
 
 	for _, spec := range locationSpecs {
 		for _, rootTemplate := range spec.Roots {
@@ -155,24 +177,33 @@ func Run(cfg Config) (Report, error) {
 			}
 			for _, root := range roots {
 				root = filepath.Clean(root)
+				locationRoot := rootArtifactPath(root, spec)
 				info, statErr := os.Stat(root)
-				exists := statErr == nil && info.IsDir()
+				exists := statErr == nil && (info.IsDir() || spec.ArtifactMode == "root")
 				locationSummaries = append(locationSummaries, LocationSummary{
+					Category: spec.Category,
 					Provider: spec.Provider,
 					Name:     spec.Name,
-					Root:     root,
+					Root:     locationRoot,
 					Exists:   exists,
 				})
 				if !exists {
 					continue
 				}
-				scanRoots = append(scanRoots, scanRoot{spec: spec, root: root})
+				item := scanRoot{spec: spec, root: root}
+				scanRoots = append(scanRoots, item)
+				if spec.ArtifactMode == "root" {
+					rootArtifactScanRoots = append(rootArtifactScanRoots, item)
+				}
 			}
 		}
 	}
 
 	totalRoots := len(scanRoots)
 	for idx, item := range scanRoots {
+		if item.spec.ArtifactMode == "root" {
+			continue
+		}
 		if cfg.Progress != nil {
 			cfg.Progress(Progress{
 				Phase:          "scanning",
@@ -198,6 +229,13 @@ func Run(cfg Config) (Report, error) {
 			return Report{}, err
 		}
 	}
+	rootRecords, err := scanRootArtifacts(rootArtifactScanRoots)
+	if err != nil {
+		return Report{}, err
+	}
+	for _, rec := range rootRecords {
+		addRecord(records, rec)
+	}
 
 	rawArtifacts := flattenRecords(records)
 	enrichOllamaOwners(rawArtifacts, home, cwd)
@@ -215,6 +253,7 @@ func Run(cfg Config) (Report, error) {
 		GeneratedAt:       time.Now(),
 		Host:              host,
 		WorkingDir:        cwd,
+		Categories:        summarizeCategories(artifacts),
 		Summary:           summary,
 		Artifacts:         artifacts,
 		Locations:         locationSummaries,
@@ -232,7 +271,7 @@ func Run(cfg Config) (Report, error) {
 			Current:        totalRoots,
 			Total:          totalRoots,
 			FoundArtifacts: report.TotalArtifacts,
-			Message:        fmt.Sprintf("Found %d models across %d providers", report.TotalArtifacts, len(report.Summary)),
+			Message:        fmt.Sprintf("Found %d items across %d providers", report.TotalArtifacts, len(report.Summary)),
 		})
 	}
 	return report, nil
@@ -385,6 +424,322 @@ func hasGlob(value string) bool {
 	return strings.ContainsAny(value, "*?[")
 }
 
+func scanRootArtifacts(items []scanRoot) ([]*record, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	workers := min(len(items), max(2, runtime.NumCPU()))
+	jobs := make(chan scanRoot)
+	results := make(chan rootScanResult, len(items))
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				rec, err := buildRootArtifactRecord(item.root, item.spec)
+				results <- rootScanResult{rec: rec, err: err}
+			}
+		}()
+	}
+	go func() {
+		for _, item := range items {
+			jobs <- item
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+
+	out := make([]*record, 0, len(items))
+	for result := range results {
+		if result.err != nil {
+			return nil, result.err
+		}
+		if result.rec != nil {
+			out = append(out, result.rec)
+		}
+	}
+	return out, nil
+}
+
+func addRecord(records map[string]*record, rec *record) {
+	if rec == nil {
+		return
+	}
+	if existing, ok := records[rec.key]; ok {
+		existing.Matches = append(existing.Matches, rec.Matches...)
+		existing.AllPaths = append(existing.AllPaths, rec.AllPaths...)
+		return
+	}
+	records[rec.key] = rec
+}
+
+func buildRootArtifactRecord(root string, spec providers.LocationSpec) (*record, error) {
+	if shouldSkipRootArtifact(root, spec) {
+		return nil, nil
+	}
+	artifactPath := rootArtifactPath(root, spec)
+	info, err := os.Stat(artifactPath)
+	if err != nil {
+		return nil, nil
+	}
+	size, fileCount, err := pathSize(artifactPath)
+	if err != nil {
+		return nil, err
+	}
+	if size < spec.MinSizeBytes {
+		return nil, nil
+	}
+	canonical := canonicalPath(artifactPath)
+	key := spec.Category + "\x00" + spec.Provider + "\x00" + canonical
+	if key == "" {
+		key = spec.Category + "\x00" + spec.Provider + "\x00" + artifactPath
+	}
+	name := rootArtifactName(root, spec)
+	return &record{
+		key: key,
+		Artifact: Artifact{
+			Category:        spec.Category,
+			Name:            name,
+			FileName:        filepath.Base(artifactPath),
+			PrimaryProvider: spec.Provider,
+			PrimaryLocation: spec.Name,
+			Path:            artifactPath,
+			CanonicalPath:   canonical,
+			SizeBytes:       size,
+			SizeHuman:       humanBytes(size),
+			FileCount:       fileCount,
+			Status:          "complete",
+			Timestamp:       info.ModTime().Format(time.RFC3339),
+			Matches: []Match{{
+				Provider: spec.Provider,
+				Location: spec.Name,
+				Path:     artifactPath,
+			}},
+			Notes: nonEmpty(spec.Notes),
+		},
+	}, nil
+}
+
+func shouldSkipRootArtifact(root string, spec providers.LocationSpec) bool {
+	base := filepath.Base(root)
+	if spec.Provider == "lima" && base == "_config" {
+		return true
+	}
+	if spec.Provider == "apple-simulators" && base == "device_set.plist" {
+		return true
+	}
+	return false
+}
+
+func rootArtifactPath(root string, spec providers.LocationSpec) string {
+	if spec.Provider == "apple-simulators" && filepath.Base(root) == "device.plist" {
+		return filepath.Dir(root)
+	}
+	return root
+}
+
+func pathSize(root string) (int64, int, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !info.IsDir() {
+		return info.Size(), 1, nil
+	}
+	var total int64
+	var count int
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		total += info.Size()
+		count++
+		return nil
+	})
+	return total, count, err
+}
+
+func rootArtifactName(root string, spec providers.LocationSpec) string {
+	base := filepath.Base(root)
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		return spec.Provider
+	}
+	switch spec.Provider {
+	case "docker":
+		return dockerArtifactName(root)
+	case "podman":
+		return podmanArtifactName(root)
+	case "apple-simulators":
+		return appleSimulatorDeviceName(root)
+	case "antigravity", "cursor":
+		if name := vscodeStateDBName(root, spec.Provider); name != "" {
+			return name
+		}
+	}
+	if spec.Category == "llm_sessions" {
+		parent := filepath.Base(filepath.Dir(root))
+		if parent != "" && parent != "." && parent != string(filepath.Separator) && parent != spec.Provider {
+			return spec.Provider + " / " + parent + "/" + base
+		}
+		return spec.Provider + " / " + base
+	}
+	return base
+}
+
+func dockerArtifactName(path string) string {
+	if strings.EqualFold(filepath.Base(path), "Docker.raw") {
+		vmID := filepath.Base(filepath.Dir(filepath.Dir(path)))
+		if vmID != "" && vmID != "." && vmID != string(filepath.Separator) {
+			if vmID == "0" {
+				return "Docker Desktop VM disk"
+			}
+			return "Docker Desktop VM " + vmID
+		}
+		return "Docker Desktop VM disk"
+	}
+	if strings.EqualFold(filepath.Base(path), "ext4.vhdx") {
+		return "Docker Desktop WSL disk"
+	}
+	return filepath.Base(path)
+}
+
+func podmanArtifactName(path string) string {
+	name := filepath.Base(path)
+	for _, ext := range []string{".raw", ".qcow2", ".vhdx"} {
+		name = strings.TrimSuffix(name, ext)
+	}
+	name = strings.TrimSuffix(name, "-arm64")
+	return name
+}
+
+func appleSimulatorDeviceName(path string) string {
+	plistPath := path
+	if filepath.Base(path) != "device.plist" {
+		plistPath = filepath.Join(path, "device.plist")
+	}
+	values := readSimplePlist(plistPath)
+	name := values["name"]
+	if name == "" {
+		name = filepath.Base(filepath.Dir(plistPath))
+	}
+	runtime := simulatorRuntimeLabel(values["runtime"])
+	if runtime != "" {
+		return name + " (" + runtime + ")"
+	}
+	return name
+}
+
+func simulatorRuntimeLabel(value string) string {
+	const prefix = "com.apple.CoreSimulator.SimRuntime."
+	value = strings.TrimPrefix(value, prefix)
+	value = strings.TrimSpace(value)
+	parts := strings.Split(value, "-")
+	if len(parts) > 1 {
+		return parts[0] + " " + strings.Join(parts[1:], ".")
+	}
+	return value
+}
+
+func vscodeStateDBName(path, provider string) string {
+	if filepath.Base(path) != "state.vscdb" {
+		return ""
+	}
+	parent := filepath.Base(filepath.Dir(path))
+	switch parent {
+	case "globalStorage":
+		return provider + " / global state"
+	}
+	if filepath.Base(filepath.Dir(filepath.Dir(path))) != "workspaceStorage" {
+		return ""
+	}
+	if workspace := workspaceName(filepath.Join(filepath.Dir(path), "workspace.json")); workspace != "" {
+		return provider + " / " + workspace
+	}
+	return provider + " / workspace " + shortID(parent)
+}
+
+func workspaceName(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var value struct {
+		Folder    string `json:"folder"`
+		Workspace string `json:"workspace"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return ""
+	}
+	folder := value.Folder
+	if folder == "" {
+		folder = value.Workspace
+	}
+	folder = strings.TrimPrefix(folder, "file://")
+	folder = strings.TrimSpace(folder)
+	if folder == "" {
+		return ""
+	}
+	name := filepath.Base(folder)
+	if decoded, err := url.PathUnescape(name); err == nil {
+		name = decoded
+	}
+	return name
+}
+
+func readSimplePlist(path string) map[string]string {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	decoder := xml.NewDecoder(file)
+	out := map[string]string{}
+	currentKey := ""
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch start.Name.Local {
+		case "key":
+			var key string
+			if err := decoder.DecodeElement(&key, &start); err == nil {
+				currentKey = strings.TrimSpace(key)
+			}
+		case "string", "integer", "date":
+			if currentKey == "" {
+				continue
+			}
+			var value string
+			if err := decoder.DecodeElement(&value, &start); err == nil {
+				out[currentKey] = strings.TrimSpace(value)
+			}
+			currentKey = ""
+		case "true":
+			if currentKey != "" {
+				out[currentKey] = "true"
+			}
+			currentKey = ""
+		case "false":
+			if currentKey != "" {
+				out[currentKey] = "false"
+			}
+			currentKey = ""
+		}
+	}
+	return out
+}
+
 func walkRoot(root string, spec providers.LocationSpec, records map[string]*record, progress func(Progress)) error {
 	lastProgress := time.Now()
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
@@ -450,6 +805,7 @@ func walkRoot(root string, spec providers.LocationSpec, records map[string]*reco
 		records[key] = &record{
 			key: key,
 			Artifact: Artifact{
+				Category:        spec.Category,
 				Name:            filepath.Base(path),
 				PrimaryProvider: spec.Provider,
 				PrimaryLocation: spec.Name,
@@ -694,6 +1050,9 @@ func aggregateArtifacts(raw []Artifact) []Artifact {
 }
 
 func aggregationIdentity(artifact Artifact) (string, string, string) {
+	if artifact.Category != "" && artifact.Category != "models" {
+		return artifact.Category + "|" + artifact.PrimaryProvider + "|" + artifact.Path, artifact.Path, artifact.Name
+	}
 	if key, path, modelName, ok := providerAggregationIdentity(artifact); ok {
 		return key, path, modelName
 	}
@@ -867,16 +1226,8 @@ func buildAggregateArtifact(groupPath, modelName string, items []Artifact) Artif
 	aggregate.Path = groupPath
 	aggregate.CanonicalPath = groupPath
 	aggregate.FileName = filepath.Base(groupPath)
-	aggregate.ModelName = displayModelName(modelName)
-	if aggregate.ModelName == "" {
-		aggregate.ModelName = displayModelName(inferModelName(aggregate))
-	}
-	aggregate.Name = aggregate.ModelName
-	if aggregate.Name == "" {
-		aggregate.Name = trimKnownExtensions(aggregate.FileName)
-	}
 	aggregate.SizeBytes = 0
-	aggregate.FileCount = len(items)
+	aggregate.FileCount = aggregateFileCount(items)
 	aggregate.Matches = collectMatches(items)
 	aggregate.AllPaths = collectPaths(items)
 	aggregate.OwnerReferences = collectOwners(items)
@@ -888,7 +1239,19 @@ func buildAggregateArtifact(groupPath, modelName string, items []Artifact) Artif
 		aggregate.SizeBytes += item.SizeBytes
 	}
 	aggregate.SizeHuman = humanBytes(aggregate.SizeBytes)
-	applyProviderNameOverrides(&aggregate)
+	if aggregate.Category == "" || aggregate.Category == "models" {
+		aggregate.ModelName = displayModelName(modelName)
+		if aggregate.ModelName == "" {
+			aggregate.ModelName = displayModelName(inferModelName(aggregate))
+		}
+		aggregate.Name = aggregate.ModelName
+		if aggregate.Name == "" {
+			aggregate.Name = trimKnownExtensions(aggregate.FileName)
+		}
+		applyProviderNameOverrides(&aggregate)
+	} else if strings.TrimSpace(aggregate.Name) == "" {
+		aggregate.Name = aggregate.FileName
+	}
 	return aggregate
 }
 
@@ -919,6 +1282,18 @@ func aggregateTimestamp(groupPath string, items []Artifact) string {
 		return ""
 	}
 	return earliest.Format(time.RFC3339)
+}
+
+func aggregateFileCount(items []Artifact) int {
+	total := 0
+	for _, item := range items {
+		if item.FileCount > 0 {
+			total += item.FileCount
+		} else {
+			total++
+		}
+	}
+	return total
 }
 
 func collectMatches(artifacts []Artifact) []Match {
@@ -986,6 +1361,9 @@ func aggregateStatus(artifacts []Artifact) string {
 func assignPrimaryProviders(artifacts []Artifact) {
 	repos := llamaCppCachedRepos()
 	for idx := range artifacts {
+		if artifacts[idx].Category != "" && artifacts[idx].Category != "models" {
+			continue
+		}
 		provider, location := choosePrimaryProvider(artifacts[idx], repos)
 		artifacts[idx].PrimaryProvider = provider
 		if location != "" {
@@ -1267,6 +1645,55 @@ func summarizeProviders(specs []providers.LocationSpec, artifacts []Artifact) []
 	return out
 }
 
+func summarizeCategories(artifacts []Artifact) []CategorySummary {
+	type acc struct {
+		count     int
+		bytes     int64
+		providers map[string]int64
+	}
+	values := map[string]acc{}
+	for _, artifact := range artifacts {
+		category := artifact.Category
+		if category == "" {
+			category = "models"
+		}
+		current := values[category]
+		if current.providers == nil {
+			current.providers = map[string]int64{}
+		}
+		current.count++
+		current.bytes += artifact.SizeBytes
+		current.providers[artifact.PrimaryProvider] += artifact.SizeBytes
+		values[category] = current
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]CategorySummary, 0, len(keys))
+	for _, key := range keys {
+		value := values[key]
+		largestProvider := ""
+		var largestBytes int64
+		for provider, bytes := range value.providers {
+			if bytes > largestBytes || (bytes == largestBytes && provider < largestProvider) {
+				largestProvider = provider
+				largestBytes = bytes
+			}
+		}
+		out = append(out, CategorySummary{
+			Category:        key,
+			Artifacts:       value.count,
+			Bytes:           value.bytes,
+			BytesHuman:      humanBytes(value.bytes),
+			ProviderCount:   len(value.providers),
+			LargestProvider: largestProvider,
+		})
+	}
+	return out
+}
+
 func totalBytes(artifacts []Artifact) int64 {
 	var total int64
 	for _, artifact := range artifacts {
@@ -1379,11 +1806,23 @@ func deduplicateOwnerRefs(artifacts []Artifact) {
 
 func finalizeArtifacts(artifacts []Artifact) {
 	for idx := range artifacts {
+		if artifacts[idx].Category == "" {
+			artifacts[idx].Category = "models"
+		}
 		artifacts[idx].OwnerReferences = humanizeOwners(artifacts[idx].OwnerReferences)
 		artifacts[idx].AllPaths = collectPaths([]Artifact{artifacts[idx]})
 		artifacts[idx].Path = preferredPath(artifacts[idx])
 		artifacts[idx].FileName = filepath.Base(artifacts[idx].Path)
 		artifacts[idx].Status = inferStatus(artifacts[idx])
+		if artifacts[idx].Category != "models" {
+			if artifacts[idx].Name == "" {
+				artifacts[idx].Name = artifacts[idx].FileName
+			}
+			if artifacts[idx].Timestamp == "" {
+				artifacts[idx].Timestamp = inferTimestamp(artifacts[idx].Path)
+			}
+			continue
+		}
 		artifacts[idx].ModelName = displayModelName(inferModelName(artifacts[idx]))
 		artifacts[idx].Name = artifacts[idx].ModelName
 		artifacts[idx].Timestamp = inferTimestamp(artifacts[idx].Path)
@@ -1797,4 +2236,18 @@ func artifactInRoot(artifact Artifact, root string) bool {
 		}
 	}
 	return false
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

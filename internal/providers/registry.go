@@ -7,8 +7,10 @@ import (
 
 type LocationSpec struct {
 	Provider          string
+	Category          string
 	Name              string
 	Roots             []string
+	ArtifactMode      string
 	MinSizeBytes      int64
 	ForcePathContains []string
 	Notes             string
@@ -234,6 +236,285 @@ func Registry(additionalRoots []string) []LocationSpec {
 			Notes:             "Broad on-demand scan across the user home tree for one-off local model files and folders.",
 			Lazy:              true,
 		},
+		{
+			Provider:     "docker",
+			Category:     "virtual_machines",
+			Name:         "Docker Desktop VM disks",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Containers/com.docker.docker/Data/vms/*/data/Docker.raw",
+				"~/.docker/desktop/vms/*/data/Docker.raw",
+				"%LOCALAPPDATA%/Docker/wsl/data/ext4.vhdx",
+				"%LOCALAPPDATA%/Docker/wsl/distro/ext4.vhdx",
+			},
+			Notes: "Docker Desktop virtual machine and backing disk stores.",
+		},
+		{
+			Provider:     "podman",
+			Category:     "virtual_machines",
+			Name:         "Podman machine disks",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.local/share/containers/podman/machine/*/*.raw",
+				"~/.local/share/containers/podman/machine/*/*.qcow2",
+				"~/.local/share/containers/podman/machine/*/*.vhdx",
+			},
+			Notes: "Podman machine backing disk images.",
+		},
+		{
+			Provider:     "lima",
+			Category:     "virtual_machines",
+			Name:         "Lima instances",
+			ArtifactMode: "root",
+			Roots:        []string{"~/.lima/*", "~/.colima/*"},
+			Notes:        "Lima and Colima VM instances.",
+		},
+		{
+			Provider:     "apple-simulators",
+			Category:     "virtual_machines",
+			Name:         "Apple simulator devices",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Developer/CoreSimulator/Devices/*/device.plist",
+				"~/Library/Developer/Xcode/UserData/Previews/Simulator Devices/*",
+				"~/Library/Developer/Xcode/UserData/Previews/Simulator%2520Devices/*",
+			},
+			Notes: "iOS, visionOS, watchOS, tvOS, and preview simulator device data.",
+		},
+		{
+			Provider:     "apple-simulator-runtimes",
+			Category:     "virtual_machines",
+			Name:         "Apple simulator runtimes and device support",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Developer/CoreSimulator/Profiles/Runtimes/*.simruntime",
+				"/Library/Developer/CoreSimulator/Profiles/Runtimes/*.simruntime",
+				"/Applications/Xcode*.app/Contents/Developer/Platforms/*/Library/Developer/CoreSimulator/Profiles/Runtimes/*.simruntime",
+				"~/Library/Developer/Xcode/iOS DeviceSupport/*",
+				"~/Library/Developer/Xcode/watchOS DeviceSupport/*",
+				"~/Library/Developer/Xcode/visionOS DeviceSupport/*",
+				"~/Library/Developer/Xcode/tvOS DeviceSupport/*",
+			},
+			Notes: "Downloaded simulator runtimes and paired-device symbol stores.",
+		},
+		{
+			Provider:     "android-emulator",
+			Category:     "virtual_machines",
+			Name:         "Android emulator AVDs",
+			ArtifactMode: "root",
+			Roots:        []string{"~/.android/avd/*.avd"},
+			Notes:        "Android Studio emulator virtual device directories.",
+		},
+		{
+			Provider:     "claude-vm",
+			Category:     "virtual_machines",
+			Name:         "Claude VM bundles",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Application Support/Claude/vm_bundles/*",
+				"~/Library/Application Support/Claude/claude-code-vm",
+			},
+			Notes: "Claude Desktop and Claude Code VM bundles.",
+		},
+		{
+			Provider:     "codex-vm",
+			Category:     "virtual_machines",
+			Name:         "Codex app VM and browser partitions",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Application Support/Codex/Partitions/*",
+				"~/Library/Application Support/Codex/.com.openai.codex.*",
+			},
+			Notes: "Codex app isolated partitions and VM-adjacent local state.",
+		},
+		{
+			Provider:     "utm",
+			Category:     "virtual_machines",
+			Name:         "UTM virtual machines",
+			ArtifactMode: "root",
+			Roots:        []string{"~/Library/Containers/com.utmapp.UTM/Data/Documents/*.utm", "~/Documents/*.utm"},
+			Notes:        "UTM virtual machine bundles.",
+		},
+		{
+			Provider:     "vercel-sandbox",
+			Category:     "virtual_machines",
+			Name:         "Vercel Sandbox caches",
+			ArtifactMode: "root",
+			Roots:        []string{"~/.vercel/sandbox", "~/.cache/vercel/sandbox"},
+			Notes:        "Local Vercel Sandbox VM and browser automation caches.",
+		},
+		{
+			Provider:     "claude",
+			Category:     "llm_sessions",
+			Name:         "Claude session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.claude/projects",
+				"~/.claude/sessions",
+				"~/.claude/todos",
+				"~/.claude/session-env",
+				"~/.claude/file-history",
+				"~/.claude/plans",
+				"~/.local/share/claude",
+				"~/.local/state/claude",
+				"~/Library/Application Support/Claude/blob_storage",
+				"~/Library/Logs/Claude",
+			},
+			Notes: "Claude Code and Claude Desktop conversation, project, and session state.",
+		},
+		{
+			Provider:     "codex",
+			Category:     "llm_sessions",
+			Name:         "Codex session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.codex/sessions",
+				"~/.codex/sqlite",
+				"~/.codex/memories",
+				"~/.codex/log",
+				"~/Library/Logs/com.openai.codex",
+			},
+			Notes: "Codex CLI and app session databases, transcripts, memories, and logs.",
+		},
+		{
+			Provider:     "copilot",
+			Category:     "llm_sessions",
+			Name:         "GitHub Copilot session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Application Support/Code/User/globalStorage/github.copilot-chat",
+				"~/Library/Application Support/github-copilot",
+				"~/.config/github-copilot",
+				"~/.config/gh-copilot",
+				"~/.local/state/gh-copilot",
+				"~/.copilot",
+			},
+			Notes: "GitHub Copilot Chat, CLI, and editor session state.",
+		},
+		{
+			Provider:     "antigravity",
+			Category:     "llm_sessions",
+			Name:         "Antigravity session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Application Support/Antigravity/User/globalStorage/state.vscdb",
+				"~/Library/Application Support/Antigravity/User/workspaceStorage/*/state.vscdb",
+			},
+			Notes: "Google Antigravity local global and workspace session state.",
+		},
+		{
+			Provider:     "opencode",
+			Category:     "llm_sessions",
+			Name:         "OpenCode session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.local/share/opencode",
+				"~/.local/state/opencode",
+			},
+			Notes: "OpenCode session databases and state files.",
+		},
+		{
+			Provider:     "cursor",
+			Category:     "llm_sessions",
+			Name:         "Cursor session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+				"~/Library/Application Support/Cursor/User/globalStorage/cursor.cursor/cursor-ai/chat-history",
+				"~/Library/Application Support/Cursor/User/workspaceStorage/*/state.vscdb",
+				"~/.config/Cursor/User/globalStorage/state.vscdb",
+				"~/.config/Cursor/User/globalStorage/cursor.cursor/cursor-ai/chat-history",
+				"~/.config/Cursor/User/workspaceStorage/*/state.vscdb",
+			},
+			Notes: "Cursor stores local chat history in user/global and workspace SQLite state.",
+		},
+		{
+			Provider:     "windsurf",
+			Category:     "llm_sessions",
+			Name:         "Windsurf session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.codeium/windsurf/cascade",
+				"~/.codeium/windsurf/memories",
+				"~/Library/Application Support/Windsurf/User/globalStorage/state.vscdb",
+				"~/Library/Application Support/Windsurf/User/workspaceStorage/*/state.vscdb",
+				"~/.config/Windsurf/User/globalStorage/state.vscdb",
+				"~/.config/Windsurf/User/workspaceStorage/*/state.vscdb",
+			},
+			Notes: "Windsurf Cascade local session and memory stores.",
+		},
+		{
+			Provider:     "cline",
+			Category:     "llm_sessions",
+			Name:         "Cline task files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.cline/data/tasks",
+				"~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks",
+				"~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks",
+			},
+			Notes: "Cline task history and conversation JSON files.",
+		},
+		{
+			Provider:     "roo-code",
+			Category:     "llm_sessions",
+			Name:         "Roo Code task files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+				"~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+			},
+			Notes: "Roo Code task history in editor global storage.",
+		},
+		{
+			Provider:     "kilo-code",
+			Category:     "llm_sessions",
+			Name:         "Kilo Code task files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/Library/Application Support/Code/User/globalStorage/kilocode.kilo-code",
+				"~/.config/Code/User/globalStorage/kilocode.kilo-code",
+			},
+			Notes: "Kilo Code task history in editor global storage.",
+		},
+		{
+			Provider:     "aider",
+			Category:     "llm_sessions",
+			Name:         "Aider chat history files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.aider.chat.history.md",
+				"~/.aider.input.history",
+				"~/.aider.llm.history",
+				"~/git/*/.aider.chat.history.md",
+				"~/code/*/.aider.chat.history.md",
+				"~/src/*/.aider.chat.history.md",
+				"~/Downloads/*/.aider.chat.history.md",
+			},
+			Notes: "Aider's default chat, input, and optional LLM history files.",
+		},
+		{
+			Provider:     "gemini-cli",
+			Category:     "llm_sessions",
+			Name:         "Gemini CLI session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.gemini/tmp/*/chats",
+				"~/.gemini/tmp/*/checkpoints",
+			},
+			Notes: "Gemini CLI per-project saved chats and checkpoints.",
+		},
+		{
+			Provider:     "qwen-code",
+			Category:     "llm_sessions",
+			Name:         "Qwen Code session files",
+			ArtifactMode: "root",
+			Roots: []string{
+				"~/.qwen/tmp/*/checkpoints",
+				"~/.qwen/tmp/*/shell_history",
+			},
+			Notes: "Qwen Code checkpoint and shell history files.",
+		},
 	}
 
 	return normalize(roots)
@@ -242,6 +523,15 @@ func Registry(additionalRoots []string) []LocationSpec {
 func normalize(specs []LocationSpec) []LocationSpec {
 	out := make([]LocationSpec, 0, len(specs))
 	for _, spec := range specs {
+		if spec.Category == "" {
+			spec.Category = "models"
+		}
+		if spec.ArtifactMode == "" {
+			spec.ArtifactMode = "files"
+		}
+		if spec.ArtifactMode == "root" && spec.MinSizeBytes == 0 {
+			spec.MinSizeBytes = 1
+		}
 		filtered := make([]string, 0, len(spec.Roots))
 		seen := map[string]struct{}{}
 		for _, root := range spec.Roots {

@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.1.0 - 2026-05-01
+
+Expanded `weightless` beyond model weights into broader local AI storage.
+
+Highlights:
+
+- Added dedicated TUI tabs for Models, Virtual Machines, and LLM Sessions
+- Added JSON `category` metadata per artifact plus top-level category summaries
+- Added high-performance exact sizing for known VM/session roots with parallel root sizing
+- Added summary type labels for `MODEL`, `VM`, and `SESSION`
+
+Virtual machine and runtime coverage:
+
+- Added Docker Desktop VM disk detection
+- Added Podman machine backing disk detection
+- Added Lima and Colima instance detection
+- Added Apple simulator device detection with human-readable names and runtimes from `device.plist`
+- Added Apple simulator runtime and Xcode device support detection
+- Added Android emulator AVD detection
+- Added Claude VM, Codex VM, UTM, and Vercel Sandbox detection
+
+LLM session coverage:
+
+- Added Claude, Codex, Copilot, Antigravity, and OpenCode session stores
+- Added Cursor, Windsurf, Cline, Roo Code, Kilo Code, Aider, Gemini CLI, and Qwen Code session stores
+- Narrowed Antigravity detection to actual global/workspace state databases instead of whole app/browser caches
+
 ## 1.0.2 - 2026-04-10
 
 Second patch release for `weightless`.

@@ -25,7 +25,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), strings.TrimLeft(branding.Banner, "\n"))
 		fmt.Fprintf(flag.CommandLine.Output(), "weightless %s\n", Version)
-		fmt.Fprintf(flag.CommandLine.Output(), "Find local model weights across AI apps, shared caches, and project folders.\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Find local model weights, VM stores, and LLM session files across AI apps, shared caches, and project folders.\n\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  weightless           launch the TUI\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  weightless --json    print machine-readable JSON\n")

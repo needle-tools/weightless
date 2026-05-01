@@ -20,10 +20,17 @@ import (
 const (
 	tabSummary = iota
 	tabModels
+	tabVirtualMachines
+	tabLLMSessions
 )
 
 const titleArt = branding.Banner
 const lazyProvider = "disk-scan"
+const (
+	categoryModels          = "models"
+	categoryVirtualMachines = "virtual_machines"
+	categoryLLMSessions     = "llm_sessions"
+)
 
 type keyMap struct {
 	Left    key.Binding
@@ -253,7 +260,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.report = filterReport(m.baseReport, m.providerFilter)
 						m.providerRoot = providerRootFor(m.baseReport, m.providerFilter)
 					}
-					m.activeTab = tabModels
+					m.activeTab = providerDefaultTab(m.report)
 					m.rebuildTables()
 					if m.providerFilter == lazyProvider && !m.diskLoaded && m.runScan != nil {
 						return m, m.startScan(lazyProvider, m.lazyScanConfig())
@@ -274,7 +281,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) View() string {
-	tabs := []string{"Summary", "Models"}
+	tabs := tabLabels()
 	var renderedTabs []string
 	for i, label := range tabs {
 		style := m.tabStyle.Copy()
@@ -294,7 +301,7 @@ func (m *Model) View() string {
 		leading = ""
 	}
 	totalBytes, totalArtifacts := m.currentTotals()
-	summary := fmt.Sprintf("%s across %d models", m.liveStyle.Render(humanBytes(totalBytes)), totalArtifacts)
+	summary := fmt.Sprintf("%s across %d items", m.liveStyle.Render(humanBytes(totalBytes)), totalArtifacts)
 
 	filterText := ""
 	if m.providerFilter != "" {
@@ -343,6 +350,10 @@ func renderTitle(width int) string {
 	return "weightless"
 }
 
+func tabLabels() []string {
+	return []string{"Summary", "Models", "Virtual Machines", "LLM Sessions"}
+}
+
 func (m *Model) rebuildTables() {
 	if len(m.tables) > 0 {
 		m.tableCursors = captureTableCursors(m.tables)
@@ -364,9 +375,9 @@ func (m *Model) availableTableHeight() int {
 	}
 
 	titleText := renderTitle(m.width)
-	header := strings.Join([]string{"Summary", "Models"}, " ")
+	header := strings.Join(tabLabels(), " ")
 	totalBytes, totalArtifacts := m.currentTotals()
-	summary := fmt.Sprintf("%s across %d models", humanBytes(totalBytes), totalArtifacts)
+	summary := fmt.Sprintf("%s across %d items", humanBytes(totalBytes), totalArtifacts)
 	filterLine := " "
 	if m.providerFilter != "" {
 		filterLine = "Provider: " + m.providerFilter + ", path: " + m.providerRoot
@@ -393,6 +404,8 @@ func buildTables(base scan.Report, report scan.Report, width int, providerFilter
 	var paths [][]string
 	summaryCols := summaryColumns(width)
 	modelCols := artifactColumns(width, providerFilter != "")
+	vmCols := artifactColumns(width, providerFilter != "")
+	sessionCols := artifactColumns(width, providerFilter != "")
 	tables := []table.Model{
 		newTable(
 			summaryCols,
@@ -402,6 +415,7 @@ func buildTables(base scan.Report, report scan.Report, width int, providerFilter
 				for _, item := range base.Summary {
 					root := providerRootFor(base, item.Provider)
 					rows = append(rows, table.Row{
+						categoryTag(providerCategoryFor(base, item.Provider)),
 						item.Provider,
 						fmt.Sprintf("%d", item.Artifacts),
 						item.BytesHuman,
@@ -415,37 +429,41 @@ func buildTables(base scan.Report, report scan.Report, width int, providerFilter
 					modelCount = fmt.Sprintf("%d", diskSummary.Artifacts)
 					size = diskSummary.BytesHuman
 				}
-				rows = append(rows, table.Row{lazyProvider, modelCount, size, diskRootsLabel})
+				rows = append(rows, table.Row{categoryTag(categoryModels), lazyProvider, modelCount, size, diskRootsLabel})
 				tabPaths = append(tabPaths, "")
 				paths = append(paths, tabPaths)
 				return rows
 			}(),
 		),
-		newTable(
-			modelCols,
-			func() []table.Row {
-				rows := make([]table.Row, 0, len(report.Artifacts))
-				tabPaths := make([]string, 0, len(report.Artifacts))
-				for _, item := range report.Artifacts {
-					displayPath := relativeToRoot(item.Path, providerRoot)
-					if providerFilter == "" {
-						displayPath = item.Path
-					}
-					rows = append(rows, table.Row{
-						item.Name,
-						item.SizeHuman,
-						item.PrimaryProvider,
-						displayTimestamp(item.Timestamp),
-						displayPath,
-					})
-					tabPaths = append(tabPaths, item.Path)
-				}
-				paths = append(paths, tabPaths)
-				return rows
-			}(),
-		),
+		artifactTable(modelCols, report.Artifacts, categoryModels, providerFilter, providerRoot, &paths),
+		artifactTable(vmCols, report.Artifacts, categoryVirtualMachines, providerFilter, providerRoot, &paths),
+		artifactTable(sessionCols, report.Artifacts, categoryLLMSessions, providerFilter, providerRoot, &paths),
 	}
 	return tables, paths
+}
+
+func artifactTable(cols []table.Column, artifacts []scan.Artifact, category, providerFilter, providerRoot string, paths *[][]string) table.Model {
+	rows := make([]table.Row, 0, len(artifacts))
+	tabPaths := make([]string, 0, len(artifacts))
+	for _, item := range artifacts {
+		if item.Category != category {
+			continue
+		}
+		displayPath := relativeToRoot(item.Path, providerRoot)
+		if providerFilter == "" {
+			displayPath = item.Path
+		}
+		rows = append(rows, table.Row{
+			item.Name,
+			item.SizeHuman,
+			item.PrimaryProvider,
+			displayTimestamp(item.Timestamp),
+			displayPath,
+		})
+		tabPaths = append(tabPaths, item.Path)
+	}
+	*paths = append(*paths, tabPaths)
+	return newTable(cols, rows)
 }
 
 func newTable(cols []table.Column, rows []table.Row) table.Model {
@@ -464,10 +482,11 @@ func newTable(cols []table.Column, rows []table.Row) table.Model {
 
 func summaryColumns(width int) []table.Column {
 	w := max(96, width-2)
-	pathWidth := max(32, w-(18+7+10))
+	pathWidth := max(32, w-(10+18+7+10))
 	return []table.Column{
+		{Title: "Type", Width: 10},
 		{Title: "Provider", Width: 18},
-		{Title: "Models", Width: 7},
+		{Title: "Items", Width: 7},
 		{Title: "Size", Width: 10},
 		{Title: "Path", Width: pathWidth},
 	}
@@ -500,7 +519,36 @@ func filterReport(base scan.Report, provider string) scan.Report {
 		out.TotalBytes += item.SizeBytes
 	}
 	out.TotalBytesHuman = humanBytes(out.TotalBytes)
+	out.Categories = summarizeCategories(out.Artifacts)
 	return out
+}
+
+func providerCategoryFor(report scan.Report, provider string) string {
+	for _, artifact := range report.Artifacts {
+		if artifact.PrimaryProvider == provider {
+			if artifact.Category != "" {
+				return artifact.Category
+			}
+			return categoryModels
+		}
+	}
+	for _, location := range report.Locations {
+		if location.Provider == provider && location.Category != "" {
+			return location.Category
+		}
+	}
+	return categoryModels
+}
+
+func categoryTag(category string) string {
+	label := "MODEL"
+	switch category {
+	case categoryVirtualMachines:
+		label = "VM"
+	case categoryLLMSessions:
+		label = "SESSION"
+	}
+	return label
 }
 
 func emptyProviderReport(provider string) scan.Report {
@@ -516,6 +564,34 @@ func emptyProviderReport(provider string) scan.Report {
 		report.Summary = []scan.ProviderSummary{{Provider: provider}}
 	}
 	return report
+}
+
+func summarizeCategories(artifacts []scan.Artifact) []scan.CategorySummary {
+	type acc struct {
+		count int
+		bytes int64
+	}
+	values := map[string]acc{}
+	for _, artifact := range artifacts {
+		category := artifact.Category
+		if category == "" {
+			category = categoryModels
+		}
+		current := values[category]
+		current.count++
+		current.bytes += artifact.SizeBytes
+		values[category] = current
+	}
+	out := make([]scan.CategorySummary, 0, len(values))
+	for category, value := range values {
+		out = append(out, scan.CategorySummary{
+			Category:   category,
+			Artifacts:  value.count,
+			Bytes:      value.bytes,
+			BytesHuman: humanBytes(value.bytes),
+		})
+	}
+	return out
 }
 
 func filterSummaries(items []scan.ProviderSummary, provider string) []scan.ProviderSummary {
@@ -632,7 +708,7 @@ func (m *Model) helpBindings() []key.Binding {
 	switch m.activeTab {
 	case tabSummary:
 		bindings = append(bindings, m.keys.Drill, m.keys.Open)
-	case tabModels:
+	case tabModels, tabVirtualMachines, tabLLMSessions:
 		bindings = append(bindings, m.keys.Open)
 	}
 	bindings = append(bindings, m.keys.Refresh)
@@ -773,6 +849,29 @@ func hasProvider(items []scan.ProviderSummary, provider string) bool {
 		}
 	}
 	return false
+}
+
+func providerDefaultTab(report scan.Report) int {
+	counts := map[string]int{}
+	for _, artifact := range report.Artifacts {
+		counts[artifact.Category]++
+	}
+	bestCategory := categoryModels
+	bestCount := 0
+	for _, category := range []string{categoryModels, categoryVirtualMachines, categoryLLMSessions} {
+		if counts[category] > bestCount {
+			bestCategory = category
+			bestCount = counts[category]
+		}
+	}
+	switch bestCategory {
+	case categoryVirtualMachines:
+		return tabVirtualMachines
+	case categoryLLMSessions:
+		return tabLLMSessions
+	default:
+		return tabModels
+	}
 }
 
 func max(a, b int) int {

@@ -1,15 +1,16 @@
 # weightless
 
-Find local AI model weights across desktop apps, shared caches, and project folders.
+Find local AI model weights, VM/runtime stores, and LLM session files across desktop apps, shared caches, and project folders.
 
-`weightless` is for the messy real world where Ollama, LM Studio, Hugging Face, Draw Things, Upscayl, `llama.cpp`, and one-off repos all store weights in different places. It gives you one interactive terminal UI plus a JSON mode for scripting and debugging.
+`weightless` is for the messy real world where Ollama, LM Studio, Hugging Face, Draw Things, Docker, Podman, Lima, Apple simulators, Claude, Codex, Copilot, Antigravity, OpenCode, and one-off repos all store heavy local files in different places. It gives you one interactive terminal UI plus a JSON mode for scripting and debugging.
 
 ## Highlights
 
-- Scans provider-specific model stores by default, with an optional on-demand `disk-scan` for broader model folders
+- Scans provider-specific model stores, virtual machine/runtime stores, and LLM session stores by default, with an optional on-demand `disk-scan` for broader model folders
 - Groups raw files into logical models so sharded packages show up as one row
-- Shows size, provider, created date, and path
-- Lets you drill from Summary into provider-specific Models
+- Shows size, provider, category, created date, and path in JSON
+- Lets you drill from Summary into provider-specific artifacts
+- Adds dedicated tabs for Models, Virtual Machines, and LLM Sessions
 - Refreshes in place with `r`
 - Emits machine-readable JSON
 - Keeps provider detection easy to extend in [internal/providers/registry.go](/Users/herbst/git/temp/llm-finder/internal/providers/registry.go)
@@ -25,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/instal
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.0.2
+curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.1.0
 ```
 
 Or download a release archive directly from GitHub Releases.
@@ -42,6 +43,8 @@ Common flags:
 
 ```bash
 weightless --providers ollama,lm-studio,huggingface
+weightless --providers docker,podman,lima,apple-simulators
+weightless --providers claude,codex,cursor,opencode
 weightless --roots ~/work/models,/Volumes/FastSSD/models
 weightless --min-size-mb 8
 ```
@@ -59,7 +62,7 @@ Keys:
 
 ## Providers
 
-Current coverage includes:
+Model coverage includes:
 
 - `ollama`
 - `lm-studio`
@@ -81,12 +84,49 @@ Current coverage includes:
 - `invokeai`
 - `disk-scan` (lazy, on demand from Summary)
 
+Virtual machine and runtime coverage includes:
+
+- `docker`
+- `podman`
+- `lima`
+- `apple-simulators`
+- `apple-simulator-runtimes`
+- `android-emulator`
+- `claude-vm`
+- `codex-vm`
+- `utm`
+- `vercel-sandbox`
+
+LLM session coverage includes:
+
+- `claude`
+- `codex`
+- `copilot`
+- `antigravity`
+- `opencode`
+- `cursor`
+- `windsurf`
+- `cline`
+- `roo-code`
+- `kilo-code`
+- `aider`
+- `gemini-cli`
+- `qwen-code`
+
 ## JSON Output
 
 Example shape:
 
 ```json
 {
+  "categories": [
+    {
+      "category": "models",
+      "artifacts": 31,
+      "size_bytes": 111883059200,
+      "size_human": "104.2 GiB"
+    }
+  ],
   "summary": [
     {
       "provider": "ollama",
@@ -99,6 +139,7 @@ Example shape:
   ],
   "artifacts": [
     {
+      "category": "models",
       "name": "qwen3.5:9b",
       "model_name": "qwen3.5:9b",
       "status": "complete",
@@ -149,7 +190,8 @@ Publish a release:
 
 ```bash
 git push origin main
-git push origin v1.0.2
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 That release flow will:
