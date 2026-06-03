@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"weightless/internal/providers"
 )
@@ -56,6 +57,29 @@ func TestCandidateAcceptsExtensionlessBlobInsideForcedModelPath(t *testing.T) {
 	path := "/Users/herbst/.ollama/models/blobs/sha256-deadbeef"
 	if !candidate(path, 1024, spec) {
 		t.Fatalf("expected %s to be accepted", path)
+	}
+}
+
+func TestExpandPathExpandsPercentEnvironmentVariables(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("LOCALAPPDATA", tmp)
+
+	path, ok := expandPath("%LOCALAPPDATA%/Docker/wsl/data/ext4.vhdx", "/home/tester", "/work")
+	if !ok {
+		t.Fatalf("expected LOCALAPPDATA path to expand")
+	}
+	expected := filepath.Join(tmp, "Docker", "wsl", "data", "ext4.vhdx")
+	if path != expected {
+		t.Fatalf("expected %q, got %q", expected, path)
+	}
+}
+
+func TestExpandPathRejectsUnresolvedPercentEnvironmentVariables(t *testing.T) {
+	t.Setenv("MISSING_WINDOWS_ENV", "")
+	os.Unsetenv("MISSING_WINDOWS_ENV")
+
+	if path, ok := expandPath("%MISSING_WINDOWS_ENV%/cache", "/home/tester", "/work"); ok {
+		t.Fatalf("expected unresolved percent env to be rejected, got %q", path)
 	}
 }
 
@@ -175,6 +199,136 @@ func TestRunReportsLLMSessionCategoryForRootArtifacts(t *testing.T) {
 	}
 	if len(report.Summary) != 1 || report.Summary[0].Provider != "opencode" || report.Summary[0].Bytes != int64(len("session-data")) {
 		t.Fatalf("unexpected provider summary: %#v", report.Summary)
+	}
+}
+
+func TestRunReportsUnityLibraryAsProjectCache(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	projectRoot := filepath.Join(tmp, "git", "game")
+	libraryRoot := filepath.Join(projectRoot, "Library")
+	if err := os.MkdirAll(filepath.Join(projectRoot, "Assets"), 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectRoot, "ProjectSettings"), 0o755); err != nil {
+		t.Fatalf("mkdir project settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "ProjectSettings", "ProjectVersion.txt"), []byte("m_EditorVersion: 6000.0.0f1"), 0o644); err != nil {
+		t.Fatalf("write project version: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(libraryRoot, "Artifacts"), 0o755); err != nil {
+		t.Fatalf("mkdir library: %v", err)
+	}
+	cachePath := filepath.Join(libraryRoot, "Artifacts", "cache")
+	cacheSize := int64(9 << 20)
+	cacheFile, err := os.Create(cachePath)
+	if err != nil {
+		t.Fatalf("create cache: %v", err)
+	}
+	if err := cacheFile.Truncate(cacheSize); err != nil {
+		cacheFile.Close()
+		t.Fatalf("truncate cache: %v", err)
+	}
+	if err := cacheFile.Close(); err != nil {
+		t.Fatalf("close cache: %v", err)
+	}
+	modifiedAt := time.Now().Add(-72 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(libraryRoot, modifiedAt, modifiedAt); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	report, err := Run(Config{Providers: []string{"unity"}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if report.TotalArtifacts != 1 {
+		t.Fatalf("expected 1 artifact, got %d", report.TotalArtifacts)
+	}
+	artifact := report.Artifacts[0]
+	if artifact.Category != "project_caches" {
+		t.Fatalf("expected project_caches category, got %q", artifact.Category)
+	}
+	if artifact.PrimaryProvider != "unity" {
+		t.Fatalf("expected unity provider, got %q", artifact.PrimaryProvider)
+	}
+	if artifact.Name != "game / Library" {
+		t.Fatalf("expected project cache name, got %q", artifact.Name)
+	}
+	if artifact.SizeBytes != cacheSize {
+		t.Fatalf("expected cache size %d, got %d", cacheSize, artifact.SizeBytes)
+	}
+	if artifact.Timestamp != modifiedAt.Format(time.RFC3339) {
+		t.Fatalf("expected library timestamp %q, got %q", modifiedAt.Format(time.RFC3339), artifact.Timestamp)
+	}
+	if len(report.Categories) != 1 || report.Categories[0].Category != "project_caches" || report.Categories[0].Bytes != cacheSize {
+		t.Fatalf("unexpected category summaries: %#v", report.Categories)
+	}
+}
+
+func TestUnityProviderSkipsPlainLibraryFolders(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	libraryRoot := filepath.Join(tmp, "git", "notes", "Library")
+	if err := os.MkdirAll(libraryRoot, 0o755); err != nil {
+		t.Fatalf("mkdir library: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(libraryRoot, "book.db"), []byte("not unity"), 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	report, err := Run(Config{Providers: []string{"unity"}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if report.TotalArtifacts != 0 {
+		t.Fatalf("expected plain library folder to be skipped, got %#v", report.Artifacts)
+	}
+}
+
+func TestRunReportsNestedUnityLibraryAsProjectCache(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	projectRoot := filepath.Join(tmp, "git", "toolkit", "projects", "SampleGame")
+	libraryRoot := filepath.Join(projectRoot, "Library")
+	if err := os.MkdirAll(filepath.Join(projectRoot, "Assets"), 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectRoot, "ProjectSettings"), 0o755); err != nil {
+		t.Fatalf("mkdir project settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "ProjectSettings", "ProjectVersion.txt"), []byte("m_EditorVersion: 6000.0.0f1"), 0o644); err != nil {
+		t.Fatalf("write project version: %v", err)
+	}
+	if err := os.MkdirAll(libraryRoot, 0o755); err != nil {
+		t.Fatalf("mkdir library: %v", err)
+	}
+	cachePath := filepath.Join(libraryRoot, "cache")
+	cacheSize := int64(9 << 20)
+	cacheFile, err := os.Create(cachePath)
+	if err != nil {
+		t.Fatalf("create cache: %v", err)
+	}
+	if err := cacheFile.Truncate(cacheSize); err != nil {
+		cacheFile.Close()
+		t.Fatalf("truncate cache: %v", err)
+	}
+	if err := cacheFile.Close(); err != nil {
+		t.Fatalf("close cache: %v", err)
+	}
+
+	report, err := Run(Config{Providers: []string{"unity"}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if report.TotalArtifacts != 1 {
+		t.Fatalf("expected 1 artifact, got %d", report.TotalArtifacts)
+	}
+	artifact := report.Artifacts[0]
+	if artifact.Path != libraryRoot {
+		t.Fatalf("expected nested Library path %q, got %q", libraryRoot, artifact.Path)
+	}
+	if artifact.Name != "SampleGame / Library" {
+		t.Fatalf("expected nested project cache name, got %q", artifact.Name)
 	}
 }
 

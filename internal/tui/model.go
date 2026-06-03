@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ const (
 	tabSummary = iota
 	tabModels
 	tabVirtualMachines
+	tabProjectCaches
 	tabLLMSessions
 )
 
@@ -29,6 +31,7 @@ const lazyProvider = "disk-scan"
 const (
 	categoryModels          = "models"
 	categoryVirtualMachines = "virtual_machines"
+	categoryProjectCaches   = "project_caches"
 	categoryLLMSessions     = "llm_sessions"
 )
 
@@ -351,7 +354,7 @@ func renderTitle(width int) string {
 }
 
 func tabLabels() []string {
-	return []string{"Summary", "Models", "Virtual Machines", "LLM Sessions"}
+	return []string{"Summary", "Models", "Virtual Machines", "Projects", "LLM Sessions"}
 }
 
 func (m *Model) rebuildTables() {
@@ -405,6 +408,7 @@ func buildTables(base scan.Report, report scan.Report, width int, providerFilter
 	summaryCols := summaryColumns(width)
 	modelCols := artifactColumns(width, providerFilter != "")
 	vmCols := artifactColumns(width, providerFilter != "")
+	projectCols := artifactColumns(width, providerFilter != "")
 	sessionCols := artifactColumns(width, providerFilter != "")
 	tables := []table.Model{
 		newTable(
@@ -437,6 +441,7 @@ func buildTables(base scan.Report, report scan.Report, width int, providerFilter
 		),
 		artifactTable(modelCols, report.Artifacts, categoryModels, providerFilter, providerRoot, &paths),
 		artifactTable(vmCols, report.Artifacts, categoryVirtualMachines, providerFilter, providerRoot, &paths),
+		artifactTable(projectCols, report.Artifacts, categoryProjectCaches, providerFilter, providerRoot, &paths),
 		artifactTable(sessionCols, report.Artifacts, categoryLLMSessions, providerFilter, providerRoot, &paths),
 	}
 	return tables, paths
@@ -458,6 +463,7 @@ func artifactTable(cols []table.Column, artifacts []scan.Artifact, category, pro
 			item.SizeHuman,
 			item.PrimaryProvider,
 			displayTimestamp(item.Timestamp),
+			displayAge(item.Timestamp),
 			displayPath,
 		})
 		tabPaths = append(tabPaths, item.Path)
@@ -496,12 +502,13 @@ func artifactColumns(width int, drilled bool) []table.Column {
 	_ = drilled
 	w := max(104, width-2)
 	nameWidth := max(24, int(float64(w)*0.24))
-	pathWidth := max(22, w-(nameWidth+10+12+10+12))
+	pathWidth := max(22, w-(nameWidth+10+12+10+8+14))
 	return []table.Column{
 		{Title: "Name", Width: nameWidth},
 		{Title: "Size", Width: 10},
 		{Title: "Provider", Width: 12},
-		{Title: "Timestamp", Width: 12},
+		{Title: "Changed", Width: 10},
+		{Title: "Age", Width: 8},
 		{Title: "Path", Width: pathWidth},
 	}
 }
@@ -545,6 +552,8 @@ func categoryTag(category string) string {
 	switch category {
 	case categoryVirtualMachines:
 		label = "VM"
+	case categoryProjectCaches:
+		label = "PROJECT"
 	case categoryLLMSessions:
 		label = "SESSION"
 	}
@@ -674,29 +683,54 @@ func commonPathPrefix(paths []string) string {
 }
 
 func splitPath(path string) []string {
-	clean := strings.TrimPrefix(path, "/")
-	if clean == "" {
+	clean := filepath.Clean(path)
+	volume := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, volume)
+	separator := string(filepath.Separator)
+	absolute := strings.HasPrefix(rest, separator)
+	rest = strings.Trim(rest, separator)
+
+	segments := make([]string, 0)
+	if volume != "" {
+		segments = append(segments, volume)
+	} else if absolute {
+		segments = append(segments, "")
+	}
+	if rest != "" {
+		segments = append(segments, strings.Split(rest, separator)...)
+	}
+	if len(segments) == 0 {
 		return []string{""}
 	}
-	return strings.Split(clean, "/")
+	return segments
 }
 
 func joinPath(segments []string) string {
 	if len(segments) == 1 && segments[0] == "" {
-		return "/"
+		return string(filepath.Separator)
 	}
-	return "/" + strings.Join(segments, "/")
+	if len(segments) > 0 && filepath.VolumeName(segments[0]) != "" {
+		if len(segments) == 1 {
+			return segments[0] + string(filepath.Separator)
+		}
+		return filepath.Join(append([]string{segments[0] + string(filepath.Separator)}, segments[1:]...)...)
+	}
+	if len(segments) > 0 && segments[0] == "" {
+		return string(filepath.Separator) + filepath.Join(segments[1:]...)
+	}
+	return filepath.Join(segments...)
 }
 
 func relativeToRoot(path, root string) string {
 	if path == "" || root == "" {
 		return path
 	}
-	trimmedRoot := strings.TrimSuffix(root, "/")
+	path = filepath.Clean(path)
+	trimmedRoot := filepath.Clean(root)
 	if path == trimmedRoot {
 		return "."
 	}
-	prefix := trimmedRoot + "/"
+	prefix := trimmedRoot + string(filepath.Separator)
 	if strings.HasPrefix(path, prefix) {
 		return strings.TrimPrefix(path, prefix)
 	}
@@ -708,7 +742,7 @@ func (m *Model) helpBindings() []key.Binding {
 	switch m.activeTab {
 	case tabSummary:
 		bindings = append(bindings, m.keys.Drill, m.keys.Open)
-	case tabModels, tabVirtualMachines, tabLLMSessions:
+	case tabModels, tabVirtualMachines, tabProjectCaches, tabLLMSessions:
 		bindings = append(bindings, m.keys.Open)
 	}
 	bindings = append(bindings, m.keys.Refresh)
@@ -858,7 +892,7 @@ func providerDefaultTab(report scan.Report) int {
 	}
 	bestCategory := categoryModels
 	bestCount := 0
-	for _, category := range []string{categoryModels, categoryVirtualMachines, categoryLLMSessions} {
+	for _, category := range []string{categoryModels, categoryVirtualMachines, categoryProjectCaches, categoryLLMSessions} {
 		if counts[category] > bestCount {
 			bestCategory = category
 			bestCount = counts[category]
@@ -867,6 +901,8 @@ func providerDefaultTab(report scan.Report) int {
 	switch bestCategory {
 	case categoryVirtualMachines:
 		return tabVirtualMachines
+	case categoryProjectCaches:
+		return tabProjectCaches
 	case categoryLLMSessions:
 		return tabLLMSessions
 	default:
@@ -974,4 +1010,33 @@ func displayTimestamp(value string) string {
 		return value
 	}
 	return parsed.Format("2006-01-02")
+}
+
+func displayAge(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return "-"
+	}
+	age := time.Since(parsed)
+	if age < 0 {
+		age = 0
+	}
+	day := 24 * time.Hour
+	switch {
+	case age < day:
+		hours := int(age / time.Hour)
+		if hours <= 0 {
+			return "<1h"
+		}
+		return fmt.Sprintf("%dh", hours)
+	case age < 60*day:
+		return fmt.Sprintf("%dd", int(age/day))
+	case age < 730*day:
+		return fmt.Sprintf("%dmo", int(age/(30*day)))
+	default:
+		return fmt.Sprintf("%dy", int(age/(365*day)))
+	}
 }

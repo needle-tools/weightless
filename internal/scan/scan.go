@@ -387,6 +387,7 @@ func expandPath(value, home, cwd string) (string, bool) {
 		}
 	}
 	value = os.ExpandEnv(value)
+	value = expandPercentEnv(value)
 	if strings.TrimSpace(value) == "" {
 		return "", false
 	}
@@ -396,10 +397,33 @@ func expandPath(value, home, cwd string) (string, bool) {
 	if strings.Contains(value, "${") {
 		return "", false
 	}
-	if strings.Contains(value, "%") && strings.Contains(value, "APPDATA") {
+	if strings.Contains(value, "%") {
 		return "", false
 	}
 	return value, true
+}
+
+func expandPercentEnv(value string) string {
+	for {
+		start := strings.Index(value, "%")
+		if start < 0 {
+			return value
+		}
+		end := strings.Index(value[start+1:], "%")
+		if end < 0 {
+			return value
+		}
+		end += start + 1
+		name := value[start+1 : end]
+		if strings.TrimSpace(name) == "" {
+			return value
+		}
+		replacement, ok := os.LookupEnv(name)
+		if !ok {
+			return value
+		}
+		value = value[:start] + replacement + value[end+1:]
+	}
 }
 
 func expandRoots(value, home, cwd string) ([]string, bool) {
@@ -492,9 +516,9 @@ func buildRootArtifactRecord(root string, spec providers.LocationSpec) (*record,
 		return nil, nil
 	}
 	canonical := canonicalPath(artifactPath)
-	key := spec.Category + "\x00" + spec.Provider + "\x00" + canonical
+	key := spec.Category + "\x00" + canonical
 	if key == "" {
-		key = spec.Category + "\x00" + spec.Provider + "\x00" + artifactPath
+		key = spec.Category + "\x00" + artifactPath
 	}
 	name := rootArtifactName(root, spec)
 	return &record{
@@ -529,6 +553,23 @@ func shouldSkipRootArtifact(root string, spec providers.LocationSpec) bool {
 	}
 	if spec.Provider == "apple-simulators" && base == "device_set.plist" {
 		return true
+	}
+	if spec.Category != "project_caches" {
+		return false
+	}
+	switch spec.Provider {
+	case "unity":
+		projectRoot := filepath.Dir(root)
+		return !pathExists(filepath.Join(projectRoot, "ProjectSettings", "ProjectVersion.txt")) || !pathExists(filepath.Join(projectRoot, "Assets"))
+	case "unreal":
+		projectRoot := filepath.Dir(root)
+		return !hasFileWithExtension(projectRoot, ".uproject")
+	case "needle-engine":
+		return !packageJSONContains(filepath.Join(projectCacheProjectRoot(root, spec.Provider), "package.json"), []string{"@needle-tools/engine", "needle-engine"})
+	case "javascript-deps":
+		return !pathExists(filepath.Join(filepath.Dir(root), "package.json"))
+	case "git-lfs":
+		return !pathExists(filepath.Join(projectCacheProjectRoot(root, spec.Provider), ".git"))
 	}
 	return false
 }
@@ -582,6 +623,9 @@ func rootArtifactName(root string, spec providers.LocationSpec) string {
 			return name
 		}
 	}
+	if spec.Category == "project_caches" {
+		return projectCacheArtifactName(root, spec.Provider)
+	}
 	if spec.Category == "llm_sessions" {
 		parent := filepath.Base(filepath.Dir(root))
 		if parent != "" && parent != "." && parent != string(filepath.Separator) && parent != spec.Provider {
@@ -590,6 +634,68 @@ func rootArtifactName(root string, spec providers.LocationSpec) string {
 		return spec.Provider + " / " + base
 	}
 	return base
+}
+
+func projectCacheArtifactName(root, provider string) string {
+	projectRoot := projectCacheProjectRoot(root, provider)
+	project := filepath.Base(projectRoot)
+	cachePath := root
+	if rel, err := filepath.Rel(projectRoot, root); err == nil && rel != "." {
+		cachePath = rel
+	} else {
+		cachePath = filepath.Base(root)
+	}
+	if project == "" || project == "." || project == string(filepath.Separator) {
+		return cachePath
+	}
+	return project + " / " + cachePath
+}
+
+func projectCacheProjectRoot(root, provider string) string {
+	switch provider {
+	case "git-lfs":
+		return filepath.Dir(filepath.Dir(filepath.Dir(root)))
+	case "needle-engine":
+		if strings.HasSuffix(filepath.ToSlash(root), "/.next/cache") {
+			return filepath.Dir(filepath.Dir(root))
+		}
+	}
+	return filepath.Dir(root)
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func hasFileWithExtension(root, ext string) bool {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(entry.Name()), ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func packageJSONContains(path string, needles []string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(data))
+	for _, needle := range needles {
+		if strings.Contains(lower, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	return false
 }
 
 func dockerArtifactName(path string) string {

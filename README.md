@@ -1,16 +1,16 @@
 # weightless
 
-Find local AI model weights, VM/runtime stores, and LLM session files across desktop apps, shared caches, and project folders.
+Find local AI model weights, VM/runtime stores, project caches, and LLM session files across desktop apps, shared caches, and project folders.
 
-`weightless` is for the messy real world where Ollama, LM Studio, Hugging Face, Draw Things, Docker, Podman, Lima, Apple simulators, Claude, Codex, Copilot, Antigravity, OpenCode, and one-off repos all store heavy local files in different places. It gives you one interactive terminal UI plus a JSON mode for scripting and debugging.
+`weightless` is for the messy real world where Ollama, LM Studio, Hugging Face, Draw Things, Docker, Podman, Lima, Apple simulators, Unity, Unreal, Adobe, DaVinci Resolve, Claude, Codex, Copilot, Antigravity, OpenCode, and one-off repos all store heavy local files in different places. It gives you one interactive terminal UI plus a JSON mode for scripting and debugging.
 
 ## Highlights
 
-- Scans provider-specific model stores, virtual machine/runtime stores, and LLM session stores by default, with an optional on-demand `disk-scan` for broader model folders
+- Scans provider-specific model stores, virtual machine/runtime stores, project caches, and LLM session stores by default, with an optional on-demand `disk-scan` for broader model folders
 - Groups raw files into logical models so sharded packages show up as one row
-- Shows size, provider, category, created date, and path in JSON
+- Shows size, provider, category, changed date, and path in JSON
 - Lets you drill from Summary into provider-specific artifacts
-- Adds dedicated tabs for Models, Virtual Machines, and LLM Sessions
+- Adds dedicated tabs for Models, Virtual Machines, Projects, and LLM Sessions
 - Refreshes in place with `r`
 - Emits machine-readable JSON
 - Keeps provider detection easy to extend in [internal/providers/registry.go](/Users/herbst/git/temp/llm-finder/internal/providers/registry.go)
@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/instal
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.1.0
+curl -fsSL https://raw.githubusercontent.com/needle-tools/weightless/main/install.sh | bash -s -- -s 1.2.0
 ```
 
 Or download a release archive directly from GitHub Releases.
@@ -44,6 +44,7 @@ Common flags:
 ```bash
 weightless --providers ollama,lm-studio,huggingface
 weightless --providers docker,podman,lima,apple-simulators
+weightless --providers unity,unreal,davinci-resolve,javascript-deps
 weightless --providers claude,codex,cursor,opencode
 weightless --roots ~/work/models,/Volumes/FastSSD/models
 weightless --min-size-mb 8
@@ -96,6 +97,19 @@ Virtual machine and runtime coverage includes:
 - `codex-vm`
 - `utm`
 - `vercel-sandbox`
+
+Project cache coverage includes:
+
+- `unity`
+- `unreal`
+- `unreal-ddc`
+- `needle-engine`
+- `javascript-deps`
+- `git-lfs`
+- `adobe-after-effects`
+- `adobe-media-cache`
+- `premiere-projects`
+- `davinci-resolve`
 
 LLM session coverage includes:
 
@@ -190,8 +204,8 @@ Publish a release:
 
 ```bash
 git push origin main
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 That release flow will:

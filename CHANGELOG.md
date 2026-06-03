@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0 - 2026-06-03
+
+Added project-cache discovery for cleanup targets that can usually be regenerated.
+
+Highlights:
+
+- Added a dedicated Projects tab with changed date and age columns
+- Added project-cache JSON category metadata and provider summaries
+- Added Unity `Library` detection, including common nested layouts such as `projects`, `development`, `tests`, `samples`, `modules`, and `TestProjects`
+- Added Unreal project generated data, shared Unreal DerivedDataCache, Needle Engine build caches, JavaScript dependencies, Git LFS objects, Adobe media caches, Premiere Pro previews, and DaVinci Resolve cache/proxy media
+- Added safeguards so generic folders like `Library` or `node_modules` are only reported when project markers are present
+
+Fixes:
+
+- Restored Windows root expansion for `%APPDATA%`, `%LOCALAPPDATA%`, `%ProgramFiles%`, and other percent-style environment variables
+- Made TUI path prefix and relative-path display use platform-specific separators
+- Verified Windows amd64 and arm64 cross-builds for release
+
 ## 1.1.0 - 2026-05-01
 
 Expanded `weightless` beyond model weights into broader local AI storage.

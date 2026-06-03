@@ -16,7 +16,7 @@ ${APP_NAME} installer
 
 Usage:
   ./install.sh
-  ./install.sh -s 1.1.0
+  ./install.sh -s 1.2.0
   ./install.sh --prefix /usr/local/bin
   ./install.sh --build-from-source
 
